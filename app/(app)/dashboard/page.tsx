@@ -10,10 +10,12 @@ export const metadata: Metadata = { title: "Dashboard" };
 
 const EMPTY_PROGRESS = { total_tasks: 0, done_tasks: 0, total_weight: 0, done_weight: 0, progress: 0 };
 
-export default async function DashboardPage(props: { searchParams: Promise<{ acesso?: string }> }) {
+export default async function DashboardPage(props: {
+  searchParams: Promise<{ acesso?: string }>;
+}) {
   const searchParams = await props.searchParams;
-  const profile = await requireProfile(["admin", "manager"]);
-  const supabase = (await createClient());
+  const profile = await requireProfile();
+  const supabase = await createClient();
 
   const [projectsRes, progressRes] = await Promise.all([
     supabase
