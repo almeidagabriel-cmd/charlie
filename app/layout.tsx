@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   description: "Sistema de gestão de tarefas e rotinas operacionais",
   manifest: "/manifest.json",
   icons: {
-    icon: "/logo.png",
+    icon: "/logo.png",  
     shortcut: "/logo.png",
     apple: "/logo.png",
   },

@@ -29,14 +29,11 @@ export function Sidebar({ profile }: { profile: Profile }) {
   const rawRole = profile?.role ?? "member";
   const isColaborador = rawRole === "member";
 
-  // Se for colaborador, exibe estritamente apenas o Checklist Diário
+  // Exibe apenas o Checklist Diário (e Usuários para admin) temporariamente
   const items = isColaborador
     ? [{ href: "/checklist", label: "Checklist Diário", icon: CheckSquare }]
     : [
         { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
-        { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-        { href: "/kanban", label: "Quadro Kanban", icon: KanbanSquare },
-        { href: "/relatorios", label: "Relatórios", icon: BarChart3 },
         ...(rawRole === "admin" ? [{ href: "/usuarios", label: "Usuários", icon: Users }] : []),
       ];
 
