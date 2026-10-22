@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, KanbanSquare, LayoutDashboard, LogOut, Users } from "lucide-react";
+import { BarChart3, CheckSquare, KanbanSquare, LayoutDashboard, LogOut, Users } from "lucide-react";
 import { logout } from "@/app/login/actions";
 import { RoleBadge } from "@/components/shared/status-badges";
 import { UserAvatar } from "@/components/shared/user-avatar";
@@ -13,6 +13,7 @@ import { cn, displayName } from "@/lib/utils";
 const NAV: { href: string; label: string; icon: typeof LayoutDashboard; roles?: UserRole[] }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/kanban", label: "Quadro Kanban", icon: KanbanSquare },
+  { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
   { href: "/relatorios", label: "Relatórios", icon: BarChart3 },
   { href: "/usuarios", label: "Usuários", icon: Users, roles: ["admin"] },
 ];
