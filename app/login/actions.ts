@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { homePath } from "@/lib/rbac";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/types";
 
 export type LoginState = { error?: string };
 
@@ -22,14 +24,14 @@ function translateAuthError(message: string) {
 
 /** Aceita apenas caminhos internos (evita open redirect). */
 function safePath(path: string | undefined) {
-  return path && path.startsWith("/") && !path.startsWith("//") ? path : "/dashboard";
+  return path && path.startsWith("/") && !path.startsWith("//") ? path : null;
 }
 
 export async function login(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const parsed = schema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email,
     password: parsed.data.password,
@@ -38,9 +40,9 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("is_active")
+    .select("is_active, role")
     .eq("id", data.user.id)
-    .single<{ is_active: boolean }>();
+    .single<{ is_active: boolean; role: UserRole }>();
 
   if (!profile?.is_active) {
     await supabase.auth.signOut();
@@ -48,11 +50,12 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
   }
 
   revalidatePath("/", "layout");
-  redirect(safePath(parsed.data.redirectTo));
+  // Colaborador → /checklist ; Admin/Gestor → /dashboard (ou a página que tentou abrir)
+  redirect(safePath(parsed.data.redirectTo) ?? homePath(profile.role));
 }
 
 export async function logout() {
-  const supabase = createClient();
+  const supabase = await createClient();
   await supabase.auth.signOut();
   revalidatePath("/", "layout");
   redirect("/login");

@@ -1,29 +1,14 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/layout/sidebar";
+import { requireProfile } from "@/lib/auth";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile) {
-    redirect("/login");
-  }
+  // Busca o perfil REAL (cargo vindo do banco). Redireciona para /login se não houver sessão.
+  const profile = await requireProfile();
 
   return (
-    <div className="min-h-screen bg-slate-50/50">
+    <div className="min-h-screen bg-slate-50">
       <Sidebar profile={profile} />
-      <main className="w-full px-6 lg:px-8 py-6">{children}</main>
+      <main className="p-4 sm:p-6 lg:p-8">{children}</main>
     </div>
   );
 }

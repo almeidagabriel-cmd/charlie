@@ -32,7 +32,7 @@ export async function createProject(input: ProjectInput): Promise<ActionResult> 
   try {
     const profile = await assertRole(["admin", "manager"]);
     const data = projectSchema.parse(input);
-    const { error } = await createClient().from("projects").insert({ ...data, created_by: profile.id });
+    const { error } = await (await createClient()).from("projects").insert({ ...data, created_by: profile.id });
     if (error) throw error;
     revalidate();
     return { ok: true };
@@ -45,7 +45,7 @@ export async function updateProject(id: string, input: ProjectInput): Promise<Ac
   try {
     await assertRole(["admin", "manager"]);
     const data = projectSchema.parse(input);
-    const { data: rows, error } = await createClient().from("projects").update(data).eq("id", id).select("id");
+    const { data: rows, error } = await (await createClient()).from("projects").update(data).eq("id", id).select("id");
     if (error) throw error;
     if (!rows?.length) throw new Error("Você não tem permissão para editar este projeto.");
     revalidate();
@@ -58,7 +58,7 @@ export async function updateProject(id: string, input: ProjectInput): Promise<Ac
 export async function deleteProject(id: string): Promise<ActionResult> {
   try {
     await assertRole(["admin", "manager"]);
-    const { data: rows, error } = await createClient().from("projects").delete().eq("id", id).select("id");
+    const { data: rows, error } = await (await createClient()).from("projects").delete().eq("id", id).select("id");
     if (error) throw error;
     if (!rows?.length) throw new Error("Você não tem permissão para excluir este projeto.");
     revalidate();

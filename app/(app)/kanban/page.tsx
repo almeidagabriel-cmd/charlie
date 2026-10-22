@@ -10,9 +10,10 @@ export const metadata: Metadata = { title: "Quadro Kanban" };
 const TASK_SELECT =
   "*, project:projects(id, name, created_by), assignee:profiles!tasks_assignee_id_fkey(id, full_name, email, avatar_url)";
 
-export default async function KanbanPage({ searchParams }: { searchParams: { project?: string } }) {
-  const profile = await requireProfile();
-  const supabase = createClient();
+export default async function KanbanPage(props: { searchParams: Promise<{ project?: string }> }) {
+  const searchParams = await props.searchParams;
+  const profile = await requireProfile(["admin", "manager"]);
+  const supabase = (await createClient());
 
   const [projectsRes, tasksRes, profilesRes] = await Promise.all([
     supabase.from("projects").select("id, name, created_by").order("name").returns<ProjectRef[]>(),

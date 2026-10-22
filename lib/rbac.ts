@@ -8,10 +8,16 @@ export const PUBLIC_ROUTES = ["/login", "/auth"];
 /** Mapa de rotas protegidas → cargos permitidos (verificado no middleware). */
 export const ROUTE_ACCESS: { prefix: string; roles: UserRole[] }[] = [
   { prefix: "/usuarios", roles: ["admin"] },
-  { prefix: "/dashboard", roles: ALL_ROLES },
-  { prefix: "/kanban", roles: ALL_ROLES },
-  { prefix: "/relatorios", roles: ALL_ROLES },
+  { prefix: "/dashboard", roles: ["admin", "manager"] },
+  { prefix: "/kanban", roles: ["admin", "manager"] },
+  { prefix: "/relatorios", roles: ["admin", "manager"] },
+  { prefix: "/checklist", roles: ALL_ROLES },
 ];
+
+/** Página inicial de cada cargo: Colaborador vai direto para o Checklist. */
+export function homePath(role: UserRole) {
+  return role === "member" ? "/checklist" : "/dashboard";
+}
 
 export function isPublicRoute(pathname: string) {
   return PUBLIC_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));

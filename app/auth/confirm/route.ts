@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const nextParam = searchParams.get("next") ?? "/dashboard";
   const next = nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/dashboard";
 
-  const supabase = createClient();
+  const supabase = (await createClient());
 
   if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });

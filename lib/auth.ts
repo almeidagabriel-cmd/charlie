@@ -2,11 +2,12 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
+import { homePath } from "@/lib/rbac";
 import type { Profile, UserRole } from "@/lib/types";
 
 /** Perfil do usuário logado (memoizado por request). */
 export const getSessionProfile = cache(async (): Promise<Profile | null> => {
-  const supabase = createClient();
+  const supabase = (await createClient());
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -20,7 +21,7 @@ export const getSessionProfile = cache(async (): Promise<Profile | null> => {
 export async function requireProfile(roles?: UserRole[]): Promise<Profile> {
   const profile = await getSessionProfile();
   if (!profile || !profile.is_active) redirect("/login");
-  if (roles && !roles.includes(profile.role)) redirect("/dashboard?acesso=negado");
+  if (roles && !roles.includes(profile.role)) redirect(`${homePath(profile.role)}?acesso=negado`);
   return profile;
 }
 

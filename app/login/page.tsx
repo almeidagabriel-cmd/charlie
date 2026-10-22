@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
+import { LayoutGrid } from "lucide-react";
 import { LoginForm } from "@/components/auth/login-form";
 
-export const metadata: Metadata = { title: "Entrar | Charlie" };
+export const metadata: Metadata = { title: "Entrar" };
 
-export default function LoginPage({
-  searchParams,
-}: {
-  searchParams: { redirectTo?: string; error?: string };
+export default async function LoginPage(props: {
+  searchParams: Promise<{ redirectTo?: string; error?: string }>;
 }) {
+  const searchParams = await props.searchParams;
   const initialError =
     searchParams.error === "inactive"
       ? "Sua conta está desativada. Procure um administrador."
@@ -17,31 +17,29 @@ export default function LoginPage({
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      {/* Painel Esquerdo (Desktop) - Fundo Branco com Logo Bem Grande e Centralizada */}
-      <div className="relative hidden flex-col items-center justify-between bg-white p-12 lg:flex border-r border-slate-100">
-        <div /> {/* Espaçamento superior */}
-        
-        {/* Logo com tamanho máximo expandido */}
-        <div className="flex flex-col items-center justify-center w-full max-w-lg px-6">
-          <img 
-            src="/logo.png" 
-            alt="Charlie Logo" 
-            className="w-full max-h-[60vh] object-contain" 
-          />
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-indigo-600 via-indigo-700 to-slate-900 p-10 text-white lg:flex">
+        <div className="flex items-center gap-2 text-lg font-semibold">
+          <LayoutGrid className="h-6 w-6" /> Charlie
         </div>
-
-        <p className="text-sm text-slate-400">© {new Date().getFullYear()} Charlie</p>
+        <div className="space-y-4">
+          <h2 className="text-3xl font-semibold leading-tight">
+            Projetos, tarefas e produtividade
+            <br /> da equipe em um só lugar.
+          </h2>
+          <p className="max-w-md text-indigo-100">
+            Kanban em tempo real, progresso ponderado por complexidade e relatórios de entrega por colaborador.
+          </p>
+        </div>
+        <p className="text-sm text-indigo-200">© {new Date().getFullYear()} Charlie</p>
+        <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
       </div>
 
-      {/* Formulário Direito */}
-      <div className="flex items-center justify-center p-6 bg-white">
+      <div className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm">
-          {/* Logo exibida em telas Mobile */}
-          <div className="mb-8 flex items-center justify-center lg:hidden">
-            <img src="/logo.png" alt="Charlie Logo" className="h-24 w-auto object-contain" />
+          <div className="mb-8 flex items-center gap-2 text-lg font-semibold lg:hidden">
+            <LayoutGrid className="h-6 w-6 text-primary" /> Charlie
           </div>
-          
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Entrar</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Entrar</h1>
           <p className="mb-6 mt-1 text-sm text-muted-foreground">Use seu e-mail corporativo e senha.</p>
           <LoginForm redirectTo={searchParams.redirectTo} initialError={initialError} />
         </div>

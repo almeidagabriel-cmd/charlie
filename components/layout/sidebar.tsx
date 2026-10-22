@@ -1,36 +1,60 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, CheckSquare, KanbanSquare, LayoutDashboard, LogOut, Users } from "lucide-react";
+import {
+  BarChart3,
+  CheckSquare,
+  KanbanSquare,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Users,
+  X,
+} from "lucide-react";
 import { logout } from "@/app/login/actions";
 import { RoleBadge } from "@/components/shared/status-badges";
 import { UserAvatar } from "@/components/shared/user-avatar";
 import { Button } from "@/components/ui/button";
-import type { Profile, UserRole } from "@/lib/types";
+import type { Profile } from "@/lib/types";
 import { cn, displayName } from "@/lib/utils";
-
-const NAV: { href: string; label: string; icon: typeof LayoutDashboard; roles?: UserRole[] }[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/kanban", label: "Quadro Kanban", icon: KanbanSquare },
-  { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
-  { href: "/relatorios", label: "Relatórios", icon: BarChart3 },
-  { href: "/usuarios", label: "Usuários", icon: Users, roles: ["admin"] },
-];
 
 export function Sidebar({ profile }: { profile: Profile }) {
   const pathname = usePathname();
-  const items = NAV.filter((i) => !i.roles || i.roles.includes(profile.role));
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // O cargo vem do banco (profiles.role). Para tornar alguém Colaborador,
+  // altere o nível de acesso em "Usuários" — não é preciso mexer no código.
+  const rawRole = profile?.role ?? "member";
+  const isColaborador = rawRole === "member";
+
+  // Se for colaborador, exibe estritamente apenas o Checklist Diário
+  const items = isColaborador
+    ? [{ href: "/checklist", label: "Checklist Diário", icon: CheckSquare }]
+    : [
+        { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
+        { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+        { href: "/kanban", label: "Quadro Kanban", icon: KanbanSquare },
+        { href: "/relatorios", label: "Relatórios", icon: BarChart3 },
+        ...(rawRole === "admin" ? [{ href: "/usuarios", label: "Usuários", icon: Users }] : []),
+      ];
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-white/95 backdrop-blur shadow-sm">
-      {/* Container de largura total (w-full) para jogar o logo na extrema esquerda e o perfil na extrema direita */}
-      <div className="flex h-20 w-full items-center justify-between px-6 lg:px-8">
-        
-        {/* Lado Esquerdo: Logo Aumentado + Navegação */}
-        <div className="flex items-center gap-8">
-          <Link href="/dashboard" className="flex items-center">
-            <img src="/logo.png" alt="Charlie Logo" className="h-14 w-auto object-contain" />
+      <div className="flex h-16 sm:h-20 w-full items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-4 sm:gap-8">
+          {/* Botão Hambúrguer visível no telemóvel */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 text-slate-600 hover:text-slate-900 rounded-lg border bg-slate-50"
+            aria-label="Abrir menu"
+          >
+            {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          </button>
+
+          <Link href={isColaborador ? "/checklist" : "/dashboard"} className="flex items-center">
+            <img src="/logo.png" alt="Charlie Logo" className="h-10 sm:h-12 w-auto object-contain" />
           </Link>
 
           <nav className="hidden md:flex items-center gap-1">
@@ -55,45 +79,49 @@ export function Sidebar({ profile }: { profile: Profile }) {
           </nav>
         </div>
 
-        {/* Lado Direito: Informações do Usuário no extremo direito */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 border-r pr-4">
-            <UserAvatar name={displayName(profile)} src={profile.avatar_url} className="h-9 w-9" />
-            <div className="hidden sm:block text-left">
-              <p className="text-sm font-semibold leading-none text-slate-900">{displayName(profile)}</p>
-              <div className="mt-1"><RoleBadge role={profile.role} /></div>
+        <div className="flex items-center gap-3 sm:gap-4">
+          {profile && (
+            <div className="flex items-center gap-2 sm:gap-3 sm:border-r sm:pr-4">
+              <UserAvatar name={displayName(profile)} src={profile.avatar_url} className="h-8 w-8 sm:h-9 sm:w-9" />
+              <div className="hidden sm:block text-left">
+                <p className="text-sm font-semibold leading-none text-slate-900">{displayName(profile)}</p>
+                <div className="mt-1"><RoleBadge role={profile.role} /></div>
+              </div>
             </div>
-          </div>
+          )}
 
           <form action={logout}>
-            <Button variant="ghost" size="sm" type="submit" className="text-slate-500 hover:text-red-600 gap-1.5">
+            <Button variant="ghost" size="sm" type="submit" className="text-slate-500 hover:text-red-600 p-2 sm:px-3">
               <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Sair</span>
+              <span className="hidden sm:inline ml-1.5">Sair</span>
             </Button>
           </form>
         </div>
-
       </div>
 
-      {/* Navegação Mobile */}
-      <nav className="flex md:hidden border-t px-4 py-2 overflow-x-auto gap-1 bg-slate-50">
-        {items.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium",
-                active ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-200"
-              )}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
+      {mobileMenuOpen && (
+        <div className="md:hidden border-b bg-white px-4 pt-2 pb-4 space-y-1 shadow-lg">
+          {items.map(({ href, label, icon: Icon }) => {
+            const active = pathname === href || pathname.startsWith(`${href}/`);
+            return (
+              <Link
+                key={href}
+                href={href}
+                onClick={() => setMobileMenuOpen(false)}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-base font-medium transition-colors",
+                  active
+                    ? "bg-primary/10 text-primary font-semibold"
+                    : "text-slate-700 hover:bg-slate-100"
+                )}
+              >
+                <Icon className="h-5 w-5" />
+                {label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </header>
   );
 }

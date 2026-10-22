@@ -34,7 +34,7 @@ export async function createTask(input: TaskInput): Promise<ActionResult> {
   try {
     const profile = await assertRole(["admin", "manager"]);
     const data = taskSchema.parse(input);
-    const { error } = await createClient()
+    const { error } = await (await createClient())
       .from("tasks")
       .insert({ ...data, position: Date.now(), created_by: profile.id });
     if (error) throw error;
@@ -49,7 +49,7 @@ export async function updateTask(id: string, input: TaskInput): Promise<ActionRe
   try {
     await assertRole(["admin", "manager"]);
     const data = taskSchema.parse(input);
-    const { data: rows, error } = await createClient().from("tasks").update(data).eq("id", id).select("id");
+    const { data: rows, error } = await (await createClient()).from("tasks").update(data).eq("id", id).select("id");
     if (error) throw error;
     if (!rows?.length) throw new Error("Você não tem permissão para editar esta tarefa.");
     revalidate();
@@ -62,7 +62,7 @@ export async function updateTask(id: string, input: TaskInput): Promise<ActionRe
 export async function deleteTask(id: string): Promise<ActionResult> {
   try {
     await assertRole(["admin", "manager"]);
-    const { data: rows, error } = await createClient().from("tasks").delete().eq("id", id).select("id");
+    const { data: rows, error } = await (await createClient()).from("tasks").delete().eq("id", id).select("id");
     if (error) throw error;
     if (!rows?.length) throw new Error("Você não tem permissão para excluir esta tarefa.");
     revalidate();

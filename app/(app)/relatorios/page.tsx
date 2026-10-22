@@ -18,9 +18,10 @@ interface SearchParams {
   projeto?: string;
 }
 
-export default async function RelatoriosPage({ searchParams }: { searchParams: SearchParams }) {
-  const profile = await requireProfile();
-  const supabase = createClient();
+export default async function RelatoriosPage(props: { searchParams: Promise<SearchParams> }) {
+  const searchParams = await props.searchParams;
+  const profile = await requireProfile(["admin", "manager"]);
+  const supabase = (await createClient());
   const range = resolveRange(searchParams.periodo, searchParams.de, searchParams.ate);
   const projectId = searchParams.projeto && searchParams.projeto !== "all" ? searchParams.projeto : undefined;
 

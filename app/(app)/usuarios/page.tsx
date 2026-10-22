@@ -11,7 +11,7 @@ export default async function UsuariosPage() {
   // Defesa em profundidade: o middleware já bloqueia não-admins.
   const me = await requireProfile(["admin"]);
 
-  const { data, error } = await createClient()
+  const { data, error } = await (await createClient())
     .from("profiles")
     .select("*")
     .order("full_name")

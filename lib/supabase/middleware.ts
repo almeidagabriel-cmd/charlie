@@ -1,6 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { canAccessRoute, isPublicRoute } from "@/lib/rbac";
+import { canAccessRoute, homePath, isPublicRoute } from "@/lib/rbac";
 import type { UserRole } from "@/lib/types";
 
 /**
@@ -44,10 +44,8 @@ export async function updateSession(request: NextRequest) {
     return redirect;
   };
 
-  if (isPublicRoute(pathname)) {
-    if (user && pathname === "/login") return redirectTo("/dashboard");
-    return response;
-  }
+  // Rotas públicas liberadas (exceto /login para quem já está logado → vai para a home do cargo)
+  if (isPublicRoute(pathname) && !(user && pathname === "/login")) return response;
 
   if (!user) {
     return redirectTo("/login", { redirectTo: pathname + search });
@@ -64,8 +62,12 @@ export async function updateSession(request: NextRequest) {
     return redirectTo("/login", { error: "inactive" });
   }
 
+  if (pathname === "/" || pathname === "/login") {
+    return redirectTo(homePath(profile.role));
+  }
+
   if (!canAccessRoute(profile.role, pathname)) {
-    return redirectTo("/dashboard", { acesso: "negado" });
+    return redirectTo(homePath(profile.role), { acesso: "negado" });
   }
 
   return response;

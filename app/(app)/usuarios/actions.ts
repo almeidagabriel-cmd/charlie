@@ -60,7 +60,7 @@ export async function updateUserRole(userId: string, role: UserRole): Promise<Ac
     if (userId === me.id) throw new Error("Você não pode alterar o seu próprio nível de acesso.");
     const parsedRole = roleSchema.parse(role);
 
-    const { error } = await createClient().from("profiles").update({ role: parsedRole }).eq("id", userId);
+    const { error } = await (await createClient()).from("profiles").update({ role: parsedRole }).eq("id", userId);
     if (error) throw error;
 
     revalidatePath("/usuarios");
@@ -73,7 +73,7 @@ export async function updateUserRole(userId: string, role: UserRole): Promise<Ac
 export async function updateUserDepartment(userId: string, department: string): Promise<ActionResult> {
   try {
     await assertRole(["admin"]);
-    const { error } = await createClient()
+    const { error } = await (await createClient())
       .from("profiles")
       .update({ department: department.trim() || null })
       .eq("id", userId);
@@ -97,7 +97,7 @@ export async function setUserActive(userId: string, active: boolean): Promise<Ac
     if (authError) throw authError;
 
     // 2) Reflete no profile (middleware e RLS verificam is_active)
-    const { error } = await createClient().from("profiles").update({ is_active: active }).eq("id", userId);
+    const { error } = await (await createClient()).from("profiles").update({ is_active: active }).eq("id", userId);
     if (error) throw error;
 
     revalidatePath("/usuarios");
