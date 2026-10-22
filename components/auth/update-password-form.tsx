@@ -26,7 +26,7 @@ export function UpdatePasswordForm() {
 
     if (error) return toast.error("Não foi possível atualizar a senha", { description: error.message });
     toast.success("Senha atualizada com sucesso!");
-    router.replace("/dashboard");
+    router.replace("/checklist");
     router.refresh();
   }
 

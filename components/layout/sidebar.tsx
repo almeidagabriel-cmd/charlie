@@ -50,7 +50,7 @@ export function Sidebar({ profile }: { profile: Profile }) {
             {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
           </button>
 
-          <Link href={isColaborador ? "/checklist" : "/dashboard"} className="flex items-center">
+          <Link href={isColaborador ? "/checklist" : "/checklist"} className="flex items-center">
             <img src="/logo.png" alt="Charlie Logo" className="h-10 sm:h-12 w-auto object-contain" />
           </Link>
 

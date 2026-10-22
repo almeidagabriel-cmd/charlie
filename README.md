@@ -44,7 +44,7 @@ npm run dev                  # http://localhost:3000
 │   ├── atualizar-senha/             # Definição de nova senha
 │   └── (app)/                       # Área autenticada (sidebar)
 │       ├── layout.tsx
-│       ├── dashboard/               # /dashboard  (page + actions de projetos)
+│       ├── dashboard/               # /checklist  (page + actions de projetos)
 │       ├── kanban/                  # /kanban     (page + actions de tarefas)
 │       ├── relatorios/              # /relatorios
 │       └── usuarios/                # /usuarios   (exclusivo admin; actions c/ service role)

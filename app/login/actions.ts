@@ -50,7 +50,7 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
   }
 
   revalidatePath("/", "layout");
-  // Colaborador → /checklist ; Admin/Gestor → /dashboard (ou a página que tentou abrir)
+  // Colaborador → /checklist ; Admin/Gestor → /checklist (ou a página que tentou abrir)
   redirect(safePath(parsed.data.redirectTo) ?? homePath(profile.role));
 }
 
