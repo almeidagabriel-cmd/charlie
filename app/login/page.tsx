@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { LayoutGrid } from "lucide-react";
 import { LoginForm } from "@/components/auth/login-form";
 
 export const metadata: Metadata = { title: "Entrar" };
@@ -16,31 +15,38 @@ export default async function LoginPage(props: {
         : undefined;
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-indigo-600 via-indigo-700 to-slate-900 p-10 text-white lg:flex">
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <LayoutGrid className="h-6 w-6" /> Charlie
+    <div className="grid min-h-screen lg:grid-cols-2 bg-white">
+      {/* Lado Esquerdo - Fundo branco com Logo */}
+      <div className="hidden flex-col items-center justify-between border-r border-gray-100 bg-white p-10 lg:flex">
+        {/* Espaçador invisível no topo para manter o logo perfeitamente centrado */}
+        <div /> 
+        
+        <div className="flex flex-col items-center justify-center">
+          <img 
+            src="/logo.png" 
+            alt="Charlie Gerenciamento de Tarefas" 
+            className="w-72 object-contain" 
+          />
         </div>
-        <div className="space-y-4">
-          <h2 className="text-3xl font-semibold leading-tight">
-            Projetos, tarefas e produtividade
-            <br /> da equipe em um só lugar.
-          </h2>
-          <p className="max-w-md text-indigo-100">
-            Kanban em tempo real, progresso ponderado por complexidade e relatórios de entrega por colaborador.
-          </p>
-        </div>
-        <p className="text-sm text-indigo-200">© {new Date().getFullYear()} Charlie</p>
-        <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
+        
+        <p className="text-sm text-muted-foreground">© {new Date().getFullYear()} Charlie</p>
       </div>
 
-      <div className="flex items-center justify-center p-6">
+      {/* Lado Direito - Formulário de Login */}
+      <div className="flex items-center justify-center p-6 bg-white">
         <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2 text-lg font-semibold lg:hidden">
-            <LayoutGrid className="h-6 w-6 text-primary" /> Charlie
+          {/* Logo exibido apenas em ecrãs pequenos (telemóveis) */}
+          <div className="mb-8 flex justify-center lg:hidden">
+            <img 
+              src="/logo.png" 
+              alt="Charlie" 
+              className="h-16 object-contain" 
+            />
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Entrar</h1>
+          
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Entrar</h1>
           <p className="mb-6 mt-1 text-sm text-muted-foreground">Use seu e-mail corporativo e senha.</p>
+          
           <LoginForm redirectTo={searchParams.redirectTo} initialError={initialError} />
         </div>
       </div>
