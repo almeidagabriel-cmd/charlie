@@ -17,7 +17,9 @@ const ROLE_CLASS: Record<UserRole, string> = {
   admin: "bg-purple-100 text-purple-800 border-purple-200",
   manager: "bg-indigo-100 text-indigo-800 border-indigo-200",
   member: "bg-slate-100 text-slate-700 border-slate-200",
+  diretor: "bg-zinc-100 text-zinc-800 border-zinc-200",
 };
+ 
 
 export function RoleBadge({ role }: { role: UserRole }) {
   return <Badge variant="outline" className={ROLE_CLASS[role]}>{ROLE_LABEL[role]}</Badge>;
