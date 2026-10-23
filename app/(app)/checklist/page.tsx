@@ -701,6 +701,8 @@ export default function ChecklistPage() {
       : []),
   ];
 
+  const isToday = selectedDate === todayLocal();
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -725,15 +727,28 @@ export default function ChecklistPage() {
             </select>
           </label>
 
-          <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
-            <Calendar className="h-4 w-4 text-slate-500" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
-              className="bg-transparent outline-none"
-            />
-          </label>
+          <div className="flex items-center gap-1.5 rounded-lg border bg-white px-2 py-1.5 text-sm">
+            <label className="flex items-center gap-1.5 px-1 cursor-pointer">
+              <Calendar className="h-4 w-4 text-slate-500" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+                className="bg-transparent outline-none cursor-pointer"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setSelectedDate(todayLocal())}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                isToday 
+                  ? "bg-primary text-white" 
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              Hoje
+            </button>
+          </div>
 
           {!isColaborador && (
             <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
