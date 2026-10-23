@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { KanbanBoard } from "@/components/Kanban/kanban-board";
+import { KanbanBoard } from "@/components/kanban/kanban-board";
 import { Task } from "@/lib/types";
 
 export default async function PlanejamentoPage() {
