@@ -7,6 +7,8 @@ import {
   Camera,
   CheckCircle2,
   CheckSquare,
+  ChevronDown,
+  ChevronRight,
   Circle,
   FileText,
   Filter,
@@ -62,6 +64,13 @@ interface Log {
   photo_url?: string | null;
 }
 
+interface Subtask {
+  id: string;
+  checklist_item_id: string;
+  title: string;
+  completed: boolean;
+}
+
 const DAYS_OF_WEEK = [
   { label: "Dom", value: 0 },
   { label: "Seg", value: 1 },
@@ -82,7 +91,6 @@ const RECURRENCE_LABEL: Record<RecurrenceType, string> = {
 
 const CATEGORIES = ["Geral", "Abertura", "Fechamento", "Limpeza", "Estoque", "Financeiro", "Atendimento", "Urgente"];
 
-/** Data local no formato YYYY-MM-DD (evita o "amanhã" do UTC à noite). */
 function todayLocal() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -98,7 +106,6 @@ function toLocalDateString(iso: string) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** A rotina deve aparecer nesta data? */
 function isDueOn(t: Template, dateStr: string) {
   const date = parseLocalDate(dateStr);
   const dow = date.getDay();
@@ -109,7 +116,7 @@ function isDueOn(t: Template, dateStr: string) {
       return dow === 0 || dow === 6;
     case "monthly": {
       const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-      const target = Math.min(t.recurrence_day ?? 1, lastDay); // dia 31 em mês de 30 → último dia
+      const target = Math.min(t.recurrence_day ?? 1, lastDay);
       return date.getDate() === target;
     }
     case "custom":
@@ -134,6 +141,10 @@ export default function ChecklistPage() {
   const [activeTab, setActiveTab] = useState<"daily" | "reports" | "manage">("daily");
   const [templates, setTemplates] = useState<Template[]>([]);
   const [logs, setLogs] = useState<Record<string, Log>>({});
+  const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({});
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  const [newSubtaskTexts, setNewSubtaskTexts] = useState<Record<string, string>>({});
+
   const [oneTimeDoneBefore, setOneTimeDoneBefore] = useState<Set<string>>(new Set());
   const [users, setUsers] = useState<Profile[]>([]);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
@@ -143,20 +154,17 @@ export default function ChecklistPage() {
   const [filterUser, setFilterUser] = useState<string>("all");
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // Modal Conclusão com Campos/Foto
   const [completingTemplate, setCompletingTemplate] = useState<Template | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  // Modal Tarefa Extra
   const [showOneTimeModal, setShowOneTimeModal] = useState(false);
   const [oneTimeTitle, setOneTimeTitle] = useState("");
   const [oneTimeDesc, setOneTimeDesc] = useState("");
   const [oneTimeCategory, setOneTimeCategory] = useState("Urgente");
   const [oneTimeAssignedTo, setOneTimeAssignedTo] = useState("");
 
-  // Form de Rotinas
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -171,17 +179,14 @@ export default function ChecklistPage() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<Template | null>(null);
 
-  // Colaborador = cargo 'member' no banco (definido em "Usuários").
   const isColaborador = (currentUserProfile?.role ?? "member") === "member";
 
   useEffect(() => {
     fetchInitialData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     fetchLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate]);
 
   async function fetchInitialData() {
@@ -199,7 +204,6 @@ export default function ChecklistPage() {
 
       if (myProfile) {
         setCurrentUserProfile(myProfile);
-        // Colaborador vê apenas as próprias tarefas
         if (myProfile.role === "member") setFilterUser(myProfile.id);
       }
     }
@@ -217,10 +221,30 @@ export default function ChecklistPage() {
       .order("created_at", { ascending: true });
 
     if (error) toast.error("Erro ao carregar rotinas", { description: error.message });
-    if (tmpls) setTemplates(tmpls);
+    if (tmpls) {
+      setTemplates(tmpls);
+      fetchSubtasks(tmpls.map((t: Template) => t.id));
+    }
 
     await fetchLogs();
     setLoading(false);
+  }
+
+  async function fetchSubtasks(templateIds: string[]) {
+    if (!templateIds.length) return;
+    const { data, error } = await supabase
+      .from("checklist_subtasks")
+      .select("*")
+      .in("checklist_item_id", templateIds);
+
+    if (!error && data) {
+      const map: Record<string, Subtask[]> = {};
+      data.forEach((s: Subtask) => {
+        if (!map[s.checklist_item_id]) map[s.checklist_item_id] = [];
+        map[s.checklist_item_id].push(s);
+      });
+      setSubtasks(map);
+    }
   }
 
   async function fetchLogs() {
@@ -239,13 +263,73 @@ export default function ChecklistPage() {
       const logMap: Record<string, Log> = {};
       const doneBefore = new Set<string>();
       lgData.forEach((l: Log) => {
-        // Ordenado por data: o registro do dia selecionado (ou o mais recente) prevalece
         logMap[l.template_id] = l;
         if (l.completed && l.date < selectedDate) doneBefore.add(l.template_id);
       });
       setLogs(logMap);
       setOneTimeDoneBefore(doneBefore);
     }
+  }
+
+  async function handleToggleSubtask(subtask: Subtask) {
+    const updatedStatus = !subtask.completed;
+    const { data, error } = await supabase
+      .from("checklist_subtasks")
+      .update({ completed: updatedStatus })
+      .eq("id", subtask.id)
+      .select()
+      .single();
+
+    if (error) {
+      toast.error("Erro ao atualizar subtarefa");
+      return;
+    }
+
+    if (data) {
+      setSubtasks((prev) => ({
+        ...prev,
+        [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).map((s) =>
+          s.id === subtask.id ? data : s
+        ),
+      }));
+    }
+  }
+
+  async function handleAddSubtask(templateId: string, e: React.FormEvent) {
+    e.preventDefault();
+    const text = newSubtaskTexts[templateId]?.trim();
+    if (!text) return;
+
+    const { data, error } = await supabase
+      .from("checklist_subtasks")
+      .insert({ checklist_item_id: templateId, title: text, completed: false })
+      .select()
+      .single();
+
+    if (error) {
+      toast.error("Erro ao adicionar subtarefa");
+      return;
+    }
+
+    if (data) {
+      setSubtasks((prev) => ({
+        ...prev,
+        [templateId]: [...(prev[templateId] || []), data],
+      }));
+      setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
+    }
+  }
+
+  async function handleDeleteSubtask(subtask: Subtask) {
+    const { error } = await supabase.from("checklist_subtasks").delete().eq("id", subtask.id);
+    if (error) {
+      toast.error("Erro ao remover subtarefa");
+      return;
+    }
+    setSubtasks((prev) => ({
+      ...prev,
+      [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).filter((s) => s.id !== subtask.id),
+    }));
   }
 
   async function handleCheckClick(template: Template) {
@@ -474,16 +558,12 @@ export default function ChecklistPage() {
     toast.success("Rotina excluída.");
   }
 
-  // ------------------------------------------------------------------
-  // Dados derivados
-  // ------------------------------------------------------------------
   const userName = (id: string | null) => {
     if (!id) return "Todos / Equipe";
     const u = users.find((x) => x.id === id);
     return u?.full_name || u?.email || "—";
   };
 
-  /** Rotinas do dia selecionado (sem filtro de pessoa). */
   const dueToday = useMemo(
     () =>
       templates.filter((t) => {
@@ -530,7 +610,6 @@ export default function ChecklistPage() {
       rows.set(key, row);
     });
     return Array.from(rows.values()).sort((a, b) => b.total - a.total);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dueToday, logs, selectedDate]);
 
   const manageList = useMemo(
@@ -538,9 +617,6 @@ export default function ChecklistPage() {
     [templates],
   );
 
-  // ------------------------------------------------------------------
-  // Render
-  // ------------------------------------------------------------------
   if (loading) {
     return (
       <div className="flex h-[50vh] items-center justify-center text-slate-500">
@@ -561,11 +637,10 @@ export default function ChecklistPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      {/* Cabeçalho */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Checklist Diário</h1>
-          <p className="mt-1 text-sm text-slate-500">Rotinas operacionais e tarefas extras do dia.</p>
+          <p className="mt-1 text-sm text-slate-500">Rotinas operacionais, subtarefas e tarefas extras do dia.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
@@ -597,7 +672,6 @@ export default function ChecklistPage() {
         </div>
       </div>
 
-      {/* Abas */}
       {tabs.length > 1 && (
         <div className="flex gap-1 rounded-lg border bg-white p-1">
           {tabs.map(({ id, label, icon: Icon }) => (
@@ -615,7 +689,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* ====================== CHECKLIST DO DIA ====================== */}
       {activeTab === "daily" && (
         <div className="space-y-5">
           <div className="rounded-xl border bg-white p-4">
@@ -656,66 +729,140 @@ export default function ChecklistPage() {
                   {items.map((t) => {
                     const done = isDone(t);
                     const log = logs[t.id];
+                    const itemSubtasks = subtasks[t.id] || [];
+                    const isExpanded = !!expandedItems[t.id];
+                    const completedSubs = itemSubtasks.filter((s) => s.completed).length;
+
                     return (
-                      <li key={t.id} className="flex items-start gap-3 px-4 py-3">
-                        <button
-                          onClick={() => handleCheckClick(t)}
-                          disabled={togglingId === t.id}
-                          className="mt-0.5 shrink-0 disabled:opacity-50"
-                          aria-label={done ? "Desmarcar" : "Concluir"}
-                        >
-                          {togglingId === t.id ? (
-                            <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-                          ) : done ? (
-                            <CheckCircle2 className="h-6 w-6 text-emerald-500" />
-                          ) : (
-                            <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />
-                          )}
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>{t.title}</p>
-                          {t.description && <p className="mt-0.5 text-sm text-slate-500">{t.description}</p>}
-                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                            <span className="flex items-center gap-1">
-                              <UserIcon className="h-3.5 w-3.5" /> {userName(t.assigned_to)}
-                            </span>
-                            {t.requires_input && (
+                      <li key={t.id} className="flex flex-col px-4 py-3">
+                        <div className="flex items-start gap-3">
+                          <button
+                            onClick={() => handleCheckClick(t)}
+                            disabled={togglingId === t.id}
+                            className="mt-0.5 shrink-0 disabled:opacity-50"
+                            aria-label={done ? "Desmarcar" : "Concluir"}
+                          >
+                            {togglingId === t.id ? (
+                              <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                            ) : done ? (
+                              <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+                            ) : (
+                              <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />
+                            )}
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                                {t.title}
+                              </p>
+                              <button
+                                onClick={() => setExpandedItems((prev) => ({ ...prev, [t.id]: !prev[t.id] }))}
+                                className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800"
+                              >
+                                {itemSubtasks.length > 0 && (
+                                  <span>{completedSubs}/{itemSubtasks.length} subtarefas</span>
+                                )}
+                                {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </button>
+                            </div>
+
+                            {t.description && <p className="mt-0.5 text-sm text-slate-500">{t.description}</p>}
+                            
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                               <span className="flex items-center gap-1">
-                                <FileText className="h-3.5 w-3.5" /> {t.input_label || "Requer valor"}
+                                <UserIcon className="h-3.5 w-3.5" /> {userName(t.assigned_to)}
                               </span>
-                            )}
-                            {t.requires_photo && (
-                              <span className="flex items-center gap-1">
-                                <Camera className="h-3.5 w-3.5" /> Requer foto
-                              </span>
-                            )}
-                            {done && log?.completed_at && (
-                              <span className="text-emerald-600">
-                                ✓ {userName(log.completed_by)} às{" "}
-                                {new Date(log.completed_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                              </span>
-                            )}
-                          </div>
-                          {done && (log?.input_value || log?.photo_url) && (
-                            <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md bg-slate-50 px-3 py-2 text-sm">
-                              {log.input_value && (
-                                <span>
-                                  <span className="text-slate-500">{t.input_label || "Valor"}:</span>{" "}
-                                  <strong className="text-slate-800">{log.input_value}</strong>
+                              {t.requires_input && (
+                                <span className="flex items-center gap-1">
+                                  <FileText className="h-3.5 w-3.5" /> {t.input_label || "Requer valor"}
                                 </span>
                               )}
-                              {log.photo_url && (
-                                <a
-                                  href={log.photo_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="flex items-center gap-1 text-primary hover:underline"
-                                >
-                                  <ImageIcon className="h-4 w-4" /> Ver foto
-                                </a>
+                              {t.requires_photo && (
+                                <span className="flex items-center gap-1">
+                                  <Camera className="h-3.5 w-3.5" /> Requer foto
+                                </span>
+                              )}
+                              {done && log?.completed_at && (
+                                <span className="text-emerald-600">
+                                  ✓ {userName(log.completed_by)} às{" "}
+                                  {new Date(log.completed_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
                               )}
                             </div>
-                          )}
+
+                            {done && (log?.input_value || log?.photo_url) && (
+                              <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md bg-slate-50 px-3 py-2 text-sm">
+                                {log.input_value && (
+                                  <span>
+                                    <span className="text-slate-500">{t.input_label || "Valor"}:</span>{" "}
+                                    <strong className="text-slate-800">{log.input_value}</strong>
+                                  </span>
+                                )}
+                                {log.photo_url && (
+                                  <a
+                                    href={log.photo_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex items-center gap-1 text-primary hover:underline"
+                                  >
+                                    <ImageIcon className="h-4 w-4" /> Ver foto
+                                  </a>
+                                )}
+                              </div>
+                            )}
+
+                            {isExpanded && (
+                              <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-3">
+                                <p className="text-xs font-semibold text-slate-600">Subtarefas / Passos:</p>
+                                {itemSubtasks.length === 0 ? (
+                                  <p className="text-xs text-slate-400">Nenhuma subtarefa adicionada.</p>
+                                ) : (
+                                  <ul className="space-y-1.5">
+                                    {itemSubtasks.map((sub) => (
+                                      <li key={sub.id} className="flex items-center justify-between gap-2 text-sm">
+                                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                                          <input
+                                            type="checkbox"
+                                            checked={sub.completed}
+                                            onChange={() => handleToggleSubtask(sub)}
+                                            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                                          />
+                                          <span className={sub.completed ? "text-slate-400 line-through" : "text-slate-700"}>
+                                            {sub.title}
+                                          </span>
+                                        </label>
+                                        <button
+                                          onClick={() => handleDeleteSubtask(sub)}
+                                          className="text-slate-400 hover:text-red-600"
+                                          title="Excluir subtarefa"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+
+                                <form onSubmit={(e) => handleAddSubtask(t.id, e)} className="mt-2 flex gap-2">
+                                  <input
+                                    type="text"
+                                    placeholder="Adicionar nova subtarefa..."
+                                    value={newSubtaskTexts[t.id] || ""}
+                                    onChange={(e) =>
+                                      setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: e.target.value }))
+                                    }
+                                    className="flex-1 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs outline-none focus:border-primary"
+                                  />
+                                  <button
+                                    type="submit"
+                                    className="rounded bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary/90"
+                                  >
+                                    Adicionar
+                                  </button>
+                                </form>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </li>
                     );
@@ -727,7 +874,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* ====================== ACOMPANHAMENTO ====================== */}
       {activeTab === "reports" && !isColaborador && (
         <div className="space-y-4">
           {report.length === 0 ? (
@@ -764,7 +910,7 @@ export default function ChecklistPage() {
                       </p>
                       <ul className="space-y-0.5 text-sm text-slate-600">
                         {row.pending.map((t) => (
-                          <li key={t.id}>• {t.title}</li>
+                          <li key={t.id}>{t.title}</li>
                         ))}
                       </ul>
                     </div>
@@ -776,7 +922,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* ====================== GERENCIAR ROTINAS ====================== */}
       {activeTab === "manage" && !isColaborador && (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
           <form onSubmit={handleSaveTemplate} className="h-fit space-y-4 rounded-xl border bg-white p-5">
@@ -918,7 +1063,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* ====================== MODAL: CONCLUIR COM VALOR/FOTO ====================== */}
       {completingTemplate && (
         <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
           <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
@@ -956,7 +1100,6 @@ export default function ChecklistPage() {
         </Modal>
       )}
 
-      {/* ====================== MODAL: TAREFA EXTRA ====================== */}
       {showOneTimeModal && (
         <Modal title="Nova tarefa extra" onClose={() => setShowOneTimeModal(false)}>
           <form onSubmit={handleCreateOneTimeTask} className="space-y-4">
