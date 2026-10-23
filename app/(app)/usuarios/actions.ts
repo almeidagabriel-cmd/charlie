@@ -41,7 +41,6 @@ export async function createUser(input: CreateUserInput): Promise<ActionResult> 
     });
     if (error) throw error;
 
-    // O trigger cria o profile; aplicamos o cargo, nome, departamento e as empresas.
     const { error: profileError } = await admin
       .from("profiles")
       .update({ 
@@ -91,18 +90,34 @@ export async function updateUserDepartment(userId: string, department: string): 
   }
 }
 
+export async function updateUserEmpresas(userId: string, empresas: string[]): Promise<ActionResult> {
+  try {
+    await assertRole(["admin"]);
+    
+    const { error } = await (await createClient())
+      .from("profiles")
+      .update({ empresas })
+      .eq("id", userId);
+      
+    if (error) throw error;
+
+    revalidatePath("/usuarios");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 export async function setUserActive(userId: string, active: boolean): Promise<ActionResult> {
   try {
     const me = await assertRole(["admin"]);
     if (userId === me.id) throw new Error("Você não pode desativar a sua própria conta.");
 
-    // 1) Bloqueia/desbloqueia login no Supabase Auth
     const { error: authError } = await createAdminClient().auth.admin.updateUserById(userId, {
       ban_duration: active ? "none" : BAN_FOREVER,
     });
     if (authError) throw authError;
 
-    // 2) Reflete no profile (middleware e RLS verificam is_active)
     const { error } = await (await createClient()).from("profiles").update({ is_active: active }).eq("id", userId);
     if (error) throw error;
 
