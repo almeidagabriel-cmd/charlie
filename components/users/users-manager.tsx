@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { KeyRound, Search, ShieldCheck, UserCheck, UserPlus, UserX } from "lucide-react";
+import { Building2, KeyRound, Search, ShieldCheck, UserCheck, UserPlus, UserX } from "lucide-react";
 import { toast } from "sonner";
-import { sendPasswordReset, setUserActive, updateUserRole } from "@/app/(app)/usuarios/actions";
+import { sendPasswordReset, setUserActive, updateUserRole, updateUserEmpresas } from "@/app/(app)/usuarios/actions";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { UserAvatar } from "@/components/shared/user-avatar";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,16 @@ import { ROLE_LABEL, ROLES } from "@/lib/constants";
 import type { Profile, UserRole } from "@/lib/types";
 import { cn, displayName, formatDate } from "@/lib/utils";
 import { CreateUserDialog } from "./create-user-dialog";
+
+const EMPRESAS_DISPONIVEIS = [
+  "Serra Carioca",
+  "Feitoria Cozinha",
+  "Casa Cônego",
+  "Savá Padaria",
+  "Rua Burguer",
+  "Rua Pizza / Feito Brasa",
+  "Produção Central",
+];
 
 type Pending =
   | { kind: "toggle"; user: Profile }
@@ -58,6 +68,21 @@ export function UsersManager({ users, currentUserId }: { users: Profile[]; curre
       const res = await updateUserRole(user.id, role);
       setBusyId(null);
       if (res.ok) toast.success(`${displayName(user)} agora é ${ROLE_LABEL[role]}.`);
+      else toast.error(res.error);
+    });
+  }
+
+  function handleEmpresasChange(user: Profile, empresa: string) {
+    const atual = user.empresas || [];
+    const novas = atual.includes(empresa)
+      ? atual.filter((e) => e !== empresa)
+      : [...atual, empresa];
+
+    setBusyId(user.id);
+    startTransition(async () => {
+      const res = await updateUserEmpresas(user.id, novas);
+      setBusyId(null);
+      if (res.ok) toast.success(`Empresas de ${displayName(user)} atualizadas.`);
       else toast.error(res.error);
     });
   }
@@ -118,8 +143,8 @@ export function UsersManager({ users, currentUserId }: { users: Profile[]; curre
               <TableHead>Colaborador</TableHead>
               <TableHead>Departamento</TableHead>
               <TableHead className="w-48">Nível de acesso</TableHead>
+              <TableHead>Empresas Vinculadas</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Desde</TableHead>
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
@@ -131,6 +156,7 @@ export function UsersManager({ users, currentUserId }: { users: Profile[]; curre
             ) : (
               filtered.map((u) => {
                 const isMe = u.id === currentUserId;
+                const userEmpresas = u.empresas || [];
                 return (
                   <TableRow key={u.id} className={cn(!u.is_active && "opacity-60")}>
                     <TableCell>
@@ -164,13 +190,34 @@ export function UsersManager({ users, currentUserId }: { users: Profile[]; curre
                       </Select>
                     </TableCell>
                     <TableCell>
+                      <div className="flex flex-wrap gap-1 max-w-xs">
+                        {EMPRESAS_DISPONIVEIS.map((emp) => {
+                          const hasEmp = userEmpresas.includes(emp);
+                          return (
+                            <button
+                              key={emp}
+                              type="button"
+                              disabled={busyId === u.id}
+                              onClick={() => handleEmpresasChange(u, emp)}
+                              className={`rounded px-2 py-0.5 text-xs font-medium border transition-colors ${
+                                hasEmp
+                                  ? "bg-primary/10 border-primary text-primary"
+                                  : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                              }`}
+                            >
+                              {emp} {hasEmp ? "✓" : "+"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </TableCell>
+                    <TableCell>
                       {u.is_active ? (
                         <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Ativo</Badge>
                       ) : (
                         <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">Desativado</Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{formatDate(u.created_at)}</TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
                         <Button
