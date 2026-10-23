@@ -38,18 +38,20 @@ export default async function PlanejamentoPage() {
 
   // 4. Bloqueio estrito: Colaboradores ('member') não têm acesso ao planeamento
   if (userRole === "member") {
-    return (
-      <div className="flex h-[70vh] flex-col items-center justify-center text-center p-4">
-        <div className="rounded-full bg-amber-50 p-4 mb-4 text-amber-600">
-          🔒
-        </div>
-        <h2 className="text-2xl font-bold text-slate-800">Acesso Restrito</h2>
-        <p className="mt-2 text-slate-500 max-w-md">
-          O módulo de planeamento de tarefas e projetos é exclusivo para Gestores e Diretores.
+   return (
+    <div className="flex h-full flex-col p-6 space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-800">Planejamento & Projetos</h1>
+        <p className="text-sm text-slate-500">
+          Quadro Kanban e controle de prazos
         </p>
       </div>
-    );
-  }
+
+      <div className="flex-1 overflow-hidden">
+        <KanbanBoard initialTasks={(tasks as Task[]) || []} />
+      </div>
+    </div>
+  );
 
   // 5. Buscar as tarefas do banco de dados (apenas para Gestores/Diretores/Admins)
   const { data: tasks } = await supabase
