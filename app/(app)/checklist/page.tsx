@@ -100,8 +100,9 @@ const EMPRESAS = [
   "Casa Cônego",
   "Savá Padaria",
   "Rua Burguer",
-  "Rua Pizza / Feito Brasa",
+  "Feito Brasa",
   "Produção Central",
+  "Distribuidora", // <--- Adicionado aqui
 ];
 
 function todayLocal() {

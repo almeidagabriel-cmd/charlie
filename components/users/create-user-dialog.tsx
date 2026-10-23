@@ -25,8 +25,9 @@ const EMPRESAS = [
   "Casa Cônego",
   "Savá Padaria",
   "Rua Burguer",
-  "Rua Pizza / Feito Brasa",
+  "Feito Brasa",
   "Produção Central",
+  "Distribuidora", // <--- Adicionado aqui
 ];
 
 const EMPTY: CreateUserInput = { email: "", full_name: "", password: "", role: "member", department: "", empresas: [] };

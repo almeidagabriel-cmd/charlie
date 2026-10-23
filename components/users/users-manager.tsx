@@ -23,8 +23,9 @@ const EMPRESAS_DISPONIVEIS = [
   "Casa Cônego",
   "Savá Padaria",
   "Rua Burguer",
-  "Rua Pizza / Feito Brasa",
+  "Feito Brasa",
   "Produção Central",
+  "Distribuidora", // <--- Adicionado aqui
 ];
 
 type Pending =
