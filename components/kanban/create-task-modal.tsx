@@ -1,8 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { Task, TaskPriority, TaskStatus } from "@/lib/types";
+
+interface ProfileOption {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+}
 
 interface CreateTaskModalProps {
   isOpen: boolean;
@@ -16,7 +22,31 @@ export function CreateTaskModal({ isOpen, onClose, onTaskCreated }: CreateTaskMo
   const [priority, setPriority] = useState<TaskPriority>("media");
   const [status, setStatus] = useState<TaskStatus>("todo");
   const [dueDate, setDueDate] = useState("");
+  const [assignedTo, setAssignedTo] = useState("");
+  const [users, setUsers] = useState<ProfileOption[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      // Buscar utilizadores para o select de responsáveis
+      async function fetchUsers() {
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, full_name, email")
+          .order("full_name", { ascending: true });
+        
+        if (data) {
+          setUsers(data);
+        }
+      }
+      fetchUsers();
+    }
+  }, [isOpen, supabase]);
 
   if (!isOpen) return null;
 
@@ -25,11 +55,6 @@ export function CreateTaskModal({ isOpen, onClose, onTaskCreated }: CreateTaskMo
     if (!title.trim()) return;
 
     setLoading(true);
-
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
 
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -41,6 +66,7 @@ export function CreateTaskModal({ isOpen, onClose, onTaskCreated }: CreateTaskMo
         priority,
         status,
         due_date: dueDate || null,
+        assigned_to: assignedTo || null,
         created_by: user?.id || null,
       })
       .select()
@@ -61,6 +87,7 @@ export function CreateTaskModal({ isOpen, onClose, onTaskCreated }: CreateTaskMo
       setPriority("media");
       setStatus("todo");
       setDueDate("");
+      setAssignedTo("");
       onClose();
     }
   };
@@ -123,6 +150,22 @@ export function CreateTaskModal({ isOpen, onClose, onTaskCreated }: CreateTaskMo
                 <option value="done">Concluído</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Responsável</label>
+            <select
+              value={assignedTo}
+              onChange={(e) => setAssignedTo(e.target.value)}
+              className="mt-1 w-full rounded border border-slate-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">Selecione um responsável...</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.full_name || u.email}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
