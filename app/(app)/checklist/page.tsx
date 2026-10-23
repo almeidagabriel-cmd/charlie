@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Building2,
   Calendar,
   Camera,
   CheckCircle2,
@@ -33,6 +34,7 @@ interface Profile {
   full_name: string | null;
   email: string | null;
   role: string;
+  empresas?: string[] | null;
 }
 
 type RecurrenceType = "daily" | "weekdays" | "weekends" | "monthly" | "custom";
@@ -42,6 +44,7 @@ interface Template {
   title: string;
   description: string | null;
   category: string;
+  empresa: string | null;
   assigned_to: string | null;
   recurrence_type: RecurrenceType;
   recurrence_day: number | null;
@@ -90,6 +93,16 @@ const RECURRENCE_LABEL: Record<RecurrenceType, string> = {
 };
 
 const CATEGORIES = ["Geral", "Abertura", "Fechamento", "Limpeza", "Estoque", "Financeiro", "Atendimento", "Urgente"];
+
+const EMPRESAS = [
+  "Serra Carioca",
+  "Feitoria Cozinha",
+  "Casa Cônego",
+  "Savá Padaria",
+  "Rua Burguer",
+  "Rua Pizza / Feito Brasa",
+  "Produção Central",
+];
 
 function todayLocal() {
   const d = new Date();
@@ -150,8 +163,11 @@ export default function ChecklistPage() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [filterUser, setFilterUser] = useState<string>("all");
+  const [filterEmpresa, setFilterEmpresa] = useState<string>("all");
+  
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const [completingTemplate, setCompletingTemplate] = useState<Template | null>(null);
@@ -164,11 +180,13 @@ export default function ChecklistPage() {
   const [oneTimeDesc, setOneTimeDesc] = useState("");
   const [oneTimeCategory, setOneTimeCategory] = useState("Urgente");
   const [oneTimeAssignedTo, setOneTimeAssignedTo] = useState("");
+  const [oneTimeEmpresa, setOneTimeEmpresa] = useState("");
 
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newCategory, setNewCategory] = useState("Geral");
+  const [newEmpresa, setNewEmpresa] = useState<string>("");
   const [newAssignedTo, setNewAssignedTo] = useState<string>("");
   const [newRecurrenceType, setNewRecurrenceType] = useState<RecurrenceType>("daily");
   const [newRecurrenceDay, setNewRecurrenceDay] = useState<number>(1);
@@ -196,33 +214,42 @@ export default function ChecklistPage() {
   async function fetchInitialData() {
     setLoading(true);
 
+    let profileData: Profile | null = null;
     const { data: userData } = await supabase.auth.getUser();
     if (userData?.user) {
       setCurrentUser(userData.user.id);
-
       const { data: myProfile } = await supabase
         .from("profiles")
-        .select("id, full_name, email, role")
+        .select("id, full_name, email, role, empresas")
         .eq("id", userData.user.id)
         .single();
 
       if (myProfile) {
+        profileData = myProfile;
         setCurrentUserProfile(myProfile);
-        if (myProfile.role === "member") setFilterUser(myProfile.id);
+        if (myProfile.role === "member") {
+          setFilterUser(myProfile.id);
+          if (myProfile.empresas && myProfile.empresas.length === 1) {
+             setFilterEmpresa(myProfile.empresas[0]);
+          }
+        }
       }
     }
 
     const { data: profilesData } = await supabase
       .from("profiles")
-      .select("id, full_name, email, role")
+      .select("id, full_name, email, role, empresas")
       .order("full_name", { ascending: true });
 
     if (profilesData) setUsers(profilesData);
 
-    const { data: tmpls, error } = await supabase
-      .from("daily_checklist_templates")
-      .select("*")
-      .order("created_at", { ascending: true });
+    let query = supabase.from("daily_checklist_templates").select("*").order("created_at", { ascending: true });
+    
+    if (profileData?.role === "member" && profileData.empresas?.length) {
+      query = query.in("empresa", profileData.empresas);
+    }
+
+    const { data: tmpls, error } = await query;
 
     if (error) toast.error("Erro ao carregar rotinas", { description: error.message });
     if (tmpls) {
@@ -326,10 +353,8 @@ export default function ChecklistPage() {
 
   async function handleDeleteSubtask(subtask: Subtask) {
     const { error } = await supabase.from("checklist_subtasks").delete().eq("id", subtask.id);
-    if (error) {
-      toast.error("Erro ao remover subtarefa");
-      return;
-    }
+    if (error) return void toast.error("Erro ao remover subtarefa");
+    
     setSubtasks((prev) => ({
       ...prev,
       [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).filter((s) => s.id !== subtask.id),
@@ -452,6 +477,7 @@ export default function ChecklistPage() {
   async function handleCreateOneTimeTask(e: React.FormEvent) {
     e.preventDefault();
     if (!oneTimeTitle.trim()) return;
+    if (!oneTimeEmpresa) return void toast.error("Selecione a empresa para a tarefa extra.");
 
     const targetUser = isColaborador ? currentUser : oneTimeAssignedTo || null;
 
@@ -461,6 +487,7 @@ export default function ChecklistPage() {
         title: oneTimeTitle,
         description: oneTimeDesc,
         category: oneTimeCategory,
+        empresa: oneTimeEmpresa,
         assigned_to: targetUser,
         created_by: currentUser,
         recurrence_type: "daily",
@@ -489,6 +516,7 @@ export default function ChecklistPage() {
     setNewTitle(template.title);
     setNewDesc(template.description || "");
     setNewCategory(template.category || "Geral");
+    setNewEmpresa(template.empresa || "");
     setNewAssignedTo(template.assigned_to || "");
     setNewRecurrenceType(template.recurrence_type || "daily");
     setNewRecurrenceDay(template.recurrence_day || 1);
@@ -509,6 +537,7 @@ export default function ChecklistPage() {
     setNewTitle("");
     setNewDesc("");
     setNewCategory("Geral");
+    setNewEmpresa("");
     setNewAssignedTo("");
     setNewRecurrenceType("daily");
     setNewRecurrenceDay(1);
@@ -523,6 +552,7 @@ export default function ChecklistPage() {
   async function handleSaveTemplate(e: React.FormEvent) {
     e.preventDefault();
     if (!newTitle.trim()) return;
+    if (!newEmpresa) return void toast.error("Por favor, selecione a empresa vinculada.");
     if (newRecurrenceType === "custom" && newCustomDays.length === 0) {
       return void toast.error("Selecione ao menos um dia da semana.");
     }
@@ -531,6 +561,7 @@ export default function ChecklistPage() {
       title: newTitle,
       description: newDesc,
       category: newCategory,
+      empresa: newEmpresa,
       assigned_to: newAssignedTo || null,
       recurrence_type: newRecurrenceType,
       recurrence_day: newRecurrenceType === "monthly" ? newRecurrenceDay : null,
@@ -599,13 +630,19 @@ export default function ChecklistPage() {
     [templates, selectedDate, oneTimeDoneBefore],
   );
 
-  const visibleToday = useMemo(
-    () =>
-      dueToday.filter(
-        (t) => filterUser === "all" || t.assigned_to === filterUser || (isColaborador && !t.assigned_to),
-      ),
-    [dueToday, filterUser, isColaborador],
-  );
+  const visibleToday = useMemo(() => {
+    return dueToday.filter((t) => {
+      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || (isColaborador && !t.assigned_to);
+      const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa;
+
+      let hasAccessToEmpresa = true;
+      if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
+        hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) : true;
+      }
+
+      return matchesUser && matchesEmpresa && hasAccessToEmpresa;
+    });
+  }, [dueToday, filterUser, filterEmpresa, isColaborador, currentUserProfile]);
 
   const isDone = (t: Template) => {
     const l = logs[t.id];
@@ -626,7 +663,7 @@ export default function ChecklistPage() {
 
   const report = useMemo(() => {
     const rows = new Map<string, { id: string | null; total: number; done: number; pending: Template[] }>();
-    dueToday.forEach((t) => {
+    visibleToday.forEach((t) => {
       const key = t.assigned_to ?? "__team";
       const row = rows.get(key) ?? { id: t.assigned_to, total: 0, done: 0, pending: [] };
       row.total += 1;
@@ -635,12 +672,15 @@ export default function ChecklistPage() {
       rows.set(key, row);
     });
     return Array.from(rows.values()).sort((a, b) => b.total - a.total);
-  }, [dueToday, logs, selectedDate]);
+  }, [visibleToday, logs, selectedDate]);
 
-  const manageList = useMemo(
-    () => [...templates].sort((a, b) => Number(a.is_one_time) - Number(b.is_one_time) || a.title.localeCompare(b.title)),
-    [templates],
-  );
+  const manageList = useMemo(() => {
+    let filtered = [...templates];
+    if (filterEmpresa !== "all") {
+       filtered = filtered.filter(t => t.empresa === filterEmpresa);
+    }
+    return filtered.sort((a, b) => Number(a.is_one_time) - Number(b.is_one_time) || a.title.localeCompare(b.title));
+  }, [templates, filterEmpresa]);
 
   if (loading) {
     return (
@@ -665,9 +705,25 @@ export default function ChecklistPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Checklist Diário</h1>
-          <p className="mt-1 text-sm text-slate-500">Rotinas operacionais, subtarefas e tarefas extras do dia.</p>
+          <p className="mt-1 text-sm text-slate-500">Rotinas operacionais, subtarefas e tarefas extras da equipe.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          
+          <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
+            <Building2 className="h-4 w-4 text-slate-500" />
+            <select 
+              value={filterEmpresa} 
+              onChange={(e) => setFilterEmpresa(e.target.value)} 
+              className="bg-transparent outline-none max-w-[120px] truncate"
+            >
+              <option value="all">Todas as Empresas</option>
+              {isColaborador && currentUserProfile?.empresas 
+                 ? currentUserProfile.empresas.map(e => <option key={e} value={e}>{e}</option>)
+                 : EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)
+              }
+            </select>
+          </label>
+
           <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
             <Calendar className="h-4 w-4 text-slate-500" />
             <input
@@ -677,17 +733,19 @@ export default function ChecklistPage() {
               className="bg-transparent outline-none"
             />
           </label>
+
           {!isColaborador && (
             <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
               <Filter className="h-4 w-4 text-slate-500" />
-              <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="bg-transparent outline-none">
-                <option value="all">Todos</option>
+              <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="bg-transparent outline-none max-w-[120px] truncate">
+                <option value="all">Todos os usuários</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
                 ))}
               </select>
             </label>
           )}
+
           <button
             onClick={() => setShowOneTimeModal(true)}
             className="flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600"
@@ -736,9 +794,9 @@ export default function ChecklistPage() {
           {visibleToday.length === 0 ? (
             <div className="flex flex-col items-center rounded-xl border border-dashed bg-white py-14 text-center">
               <FolderCheck className="mb-3 h-8 w-8 text-slate-400" />
-              <p className="font-medium text-slate-700">Nenhuma tarefa para esta data</p>
+              <p className="font-medium text-slate-700">Nenhuma tarefa encontrada</p>
               <p className="mt-1 text-sm text-slate-500">
-                {isColaborador ? "Aproveite o dia! 🎉" : "Cadastre rotinas na aba \"Gerenciar Rotinas\"."}
+                {isColaborador ? "Verifique o filtro de empresa ou aproveite o dia! 🎉" : "Cadastre rotinas na aba \"Gerenciar Rotinas\"."}
               </p>
             </div>
           ) : (
@@ -794,6 +852,9 @@ export default function ChecklistPage() {
                             {t.description && <p className="mt-0.5 text-sm text-slate-500">{t.description}</p>}
                             
                             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                              <span className="flex items-center gap-1 text-primary/80 font-medium">
+                                <Building2 className="h-3.5 w-3.5" /> {t.empresa || "Geral"}
+                              </span>
                               <span className="flex items-center gap-1">
                                 <UserIcon className="h-3.5 w-3.5" /> {userName(t.assigned_to)}
                               </span>
@@ -903,7 +964,7 @@ export default function ChecklistPage() {
         <div className="space-y-4">
           {report.length === 0 ? (
             <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
-              Nenhuma rotina prevista para esta data.
+              Nenhuma rotina prevista para a empresa selecionada nesta data.
             </div>
           ) : (
             report.map((row) => {
@@ -935,7 +996,7 @@ export default function ChecklistPage() {
                       </p>
                       <ul className="space-y-0.5 text-sm text-slate-600">
                         {row.pending.map((t) => (
-                          <li key={t.id}>{t.title}</li>
+                          <li key={t.id}>{t.title} <span className="text-xs opacity-60">({t.empresa})</span></li>
                         ))}
                       </ul>
                     </div>
@@ -959,12 +1020,22 @@ export default function ChecklistPage() {
               )}
             </div>
 
+            <Field label="Empresa *">
+              <select value={newEmpresa} onChange={(e) => setNewEmpresa(e.target.value)} required className={inputCls}>
+                <option value="">Selecione a Empresa</option>
+                {EMPRESAS.map((e) => (
+                  <option key={e} value={e}>{e}</option>
+                ))}
+              </select>
+            </Field>
+
             <Field label="Título *">
               <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required className={inputCls} />
             </Field>
             <Field label="Descrição">
               <textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} rows={2} className={inputCls} />
             </Field>
+            
             <div className="grid grid-cols-2 gap-3">
               <Field label="Categoria">
                 <input list="checklist-categories" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls} />
@@ -1095,19 +1166,22 @@ export default function ChecklistPage() {
           </form>
 
           <div className="overflow-hidden rounded-xl border bg-white">
-            <header className="border-b bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700">
-              Rotinas cadastradas ({templates.length})
+            <header className="flex justify-between items-center border-b bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700">
+              <span>Rotinas cadastradas ({manageList.length})</span>
             </header>
             {manageList.length === 0 ? (
-              <p className="py-10 text-center text-sm text-slate-500">Nenhuma rotina cadastrada.</p>
+              <p className="py-10 text-center text-sm text-slate-500">Nenhuma rotina cadastrada para esta empresa.</p>
             ) : (
-              <ul className="divide-y">
+              <ul className="divide-y max-h-[700px] overflow-y-auto">
                 {manageList.map((t) => (
                   <li key={t.id} className={`flex items-start gap-3 px-4 py-3 ${editingTemplateId === t.id ? "bg-primary/5" : ""}`}>
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-slate-800">
                         {t.is_one_time && <Zap className="mr-1 inline h-4 w-4 text-amber-500" />}
                         {t.title}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500 font-medium text-primary">
+                         {t.empresa}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500">
                         {t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}
@@ -1172,12 +1246,25 @@ export default function ChecklistPage() {
             <p className="text-sm text-slate-500">
               Aparece no checklist até ser concluída (não se repete).
             </p>
+            
+            <Field label="Empresa *">
+              <select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} required className={inputCls}>
+                <option value="">Selecione a Empresa</option>
+                {isColaborador && currentUserProfile?.empresas 
+                 ? currentUserProfile.empresas.map(e => <option key={e} value={e}>{e}</option>)
+                 : EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)
+                }
+              </select>
+            </Field>
+
             <Field label="Título *">
               <input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} />
             </Field>
+            
             <Field label="Descrição">
               <textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} />
             </Field>
+            
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria">
                 <input list="checklist-categories-extra" value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls} />
@@ -1196,7 +1283,8 @@ export default function ChecklistPage() {
                 </Field>
               )}
             </div>
-            <div className="flex justify-end gap-2">
+            
+            <div className="flex justify-end gap-2 mt-2">
               <button type="button" onClick={() => setShowOneTimeModal(false)} className="rounded-lg border px-4 py-2 text-sm">
                 Cancelar
               </button>
