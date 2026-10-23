@@ -24,6 +24,7 @@ import {
   Users,
   X,
   Zap,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -166,6 +167,7 @@ export default function ChecklistPage() {
   const [loading, setLoading] = useState(true);
   
   const [selectedDate, setSelectedDate] = useState(todayLocal());
+  const [periodoFiltro, setPeriodoFiltro] = useState<string>("dia");
   const [filterUser, setFilterUser] = useState<string>("all");
   const [filterEmpresa, setFilterEmpresa] = useState<string>("all");
   
@@ -683,6 +685,20 @@ export default function ChecklistPage() {
     return filtered.sort((a, b) => a.title.localeCompare(b.title));
   }, [templates, filterEmpresa]);
 
+  function handlePeriodoChange(val: string) {
+    setPeriodoFiltro(val);
+    const d = new Date();
+    if (val === "ontem") {
+      d.setDate(d.getDate() - 1);
+      setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+    } else if (val === "hoje") {
+      setSelectedDate(todayLocal());
+    } else if (val === "amanha") {
+      d.setDate(d.getDate() + 1);
+      setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-[50vh] items-center justify-center text-slate-500">
@@ -728,18 +744,37 @@ export default function ChecklistPage() {
           </label>
 
           <div className="flex items-center gap-1.5 rounded-lg border bg-white px-2 py-1.5 text-sm">
+            <select
+              value={periodoFiltro}
+              onChange={(e) => handlePeriodoChange(e.target.value)}
+              className="bg-transparent outline-none font-medium text-slate-700 cursor-pointer pr-1 border-r border-slate-200 mr-1"
+            >
+              <option value="personalizado">Período:</option>
+              <option value="ontem">Ontem</option>
+              <option value="hoje">Hoje</option>
+              <option value="amanha">Amanhã</option>
+            </select>
+
             <label className="flex items-center gap-1.5 px-1 cursor-pointer">
               <Calendar className="h-4 w-4 text-slate-500" />
               <input
                 type="date"
                 value={selectedDate}
-                onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setSelectedDate(e.target.value);
+                    setPeriodoFiltro("personalizado");
+                  }
+                }}
                 className="bg-transparent outline-none cursor-pointer"
               />
             </label>
             <button
               type="button"
-              onClick={() => setSelectedDate(todayLocal())}
+              onClick={() => {
+                setSelectedDate(todayLocal());
+                setPeriodoFiltro("hoje");
+              }}
               className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
                 isToday 
                   ? "bg-primary text-white" 
