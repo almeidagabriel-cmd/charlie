@@ -24,7 +24,6 @@ import {
   Users,
   X,
   Zap,
-  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -166,8 +165,8 @@ export default function ChecklistPage() {
   const [currentUserProfile, setCurrentUserProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   
-  const [selectedDate, setSelectedDate] = useState(todayLocal());
-  const [periodoFiltro, setPeriodoFiltro] = useState<string>("dia");
+  const [startDate, setStartDate] = useState(todayLocal());
+  const [endDate, setEndDate] = useState(todayLocal());
   const [filterUser, setFilterUser] = useState<string>("all");
   const [filterEmpresa, setFilterEmpresa] = useState<string>("all");
   
@@ -212,7 +211,7 @@ export default function ChecklistPage() {
 
   useEffect(() => {
     fetchLogs();
-  }, [selectedDate]);
+  }, [startDate, endDate]);
 
   async function fetchInitialData() {
     setLoading(true);
@@ -285,7 +284,8 @@ export default function ChecklistPage() {
     const { data: lgData, error } = await supabase
       .from("daily_checklist_logs")
       .select("*")
-      .lte("date", selectedDate)
+      .gte("date", startDate)
+      .lte("date", endDate)
       .order("date", { ascending: true });
 
     if (error) {
@@ -298,7 +298,7 @@ export default function ChecklistPage() {
       const doneBefore = new Set<string>();
       lgData.forEach((l: Log) => {
         logMap[l.template_id] = l;
-        if (l.completed && l.date < selectedDate) doneBefore.add(l.template_id);
+        if (l.completed && l.date < startDate) doneBefore.add(l.template_id);
       });
       setLogs(logMap);
       setOneTimeDoneBefore(doneBefore);
@@ -366,7 +366,7 @@ export default function ChecklistPage() {
 
   async function handleCheckClick(template: Template) {
     const currentLog = logs[template.id];
-    const isCompleted = !!currentLog?.completed && currentLog.date === selectedDate;
+    const isCompleted = !!currentLog?.completed;
 
     if (isCompleted) {
       setTogglingId(template.id);
@@ -405,9 +405,10 @@ export default function ChecklistPage() {
   ) {
     setUploading(true);
     const currentLog = logs[templateId];
+    const targetDate = startDate; // Usa a data inicial do filtro para registo
 
     const result =
-      currentLog && currentLog.date === selectedDate
+      currentLog
         ? await supabase
             .from("daily_checklist_logs")
             .update({
@@ -428,7 +429,7 @@ export default function ChecklistPage() {
               completed_at: new Date().toISOString(),
               completed_by: currentUser,
               assigned_to: assignedTo,
-              date: selectedDate,
+              date: targetDate,
               input_value: val,
               photo_url: photoUrl,
             })
@@ -623,18 +624,16 @@ export default function ChecklistPage() {
     return u?.full_name || u?.email || "—";
   };
 
-  const dueToday = useMemo(
-    () =>
-      templates.filter((t) => {
-        if (t.created_at && toLocalDateString(t.created_at) > selectedDate) return false;
-        if (t.is_one_time) return !oneTimeDoneBefore.has(t.id);
-        return isDueOn(t, selectedDate);
-      }),
-    [templates, selectedDate, oneTimeDoneBefore],
-  );
+  const dueInRange = useMemo(() => {
+    return templates.filter((t) => {
+      if (t.created_at && toLocalDateString(t.created_at) > endDate) return false;
+      if (t.is_one_time) return !oneTimeDoneBefore.has(t.id);
+      return isDueOn(t, startDate);
+    });
+  }, [templates, startDate, endDate, oneTimeDoneBefore]);
 
-  const visibleToday = useMemo(() => {
-    return dueToday.filter((t) => {
+  const visibleTasks = useMemo(() => {
+    return dueInRange.filter((t) => {
       const matchesUser = filterUser === "all" || t.assigned_to === filterUser || (isColaborador && !t.assigned_to);
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa;
 
@@ -645,28 +644,28 @@ export default function ChecklistPage() {
 
       return matchesUser && matchesEmpresa && hasAccessToEmpresa;
     });
-  }, [dueToday, filterUser, filterEmpresa, isColaborador, currentUserProfile]);
+  }, [dueInRange, filterUser, filterEmpresa, isColaborador, currentUserProfile]);
 
   const isDone = (t: Template) => {
     const l = logs[t.id];
-    return !!l && l.completed && l.date === selectedDate;
+    return !!l && l.completed;
   };
 
   const grouped = useMemo(() => {
     const map = new Map<string, Template[]>();
-    visibleToday.forEach((t) => {
+    visibleTasks.forEach((t) => {
       const key = t.is_one_time ? "⚡ Tarefas extras" : t.category || "Geral";
       map.set(key, [...(map.get(key) ?? []), t]);
     });
     return Array.from(map.entries()).sort(([a], [b]) => (a.startsWith("⚡") ? -1 : b.startsWith("⚡") ? 1 : a.localeCompare(b)));
-  }, [visibleToday]);
+  }, [visibleTasks]);
 
-  const doneCount = visibleToday.filter(isDone).length;
-  const pct = visibleToday.length ? Math.round((doneCount / visibleToday.length) * 100) : 0;
+  const doneCount = visibleTasks.filter(isDone).length;
+  const pct = visibleTasks.length ? Math.round((doneCount / visibleTasks.length) * 100) : 0;
 
   const report = useMemo(() => {
     const rows = new Map<string, { id: string | null; total: number; done: number; pending: Template[] }>();
-    visibleToday.forEach((t) => {
+    visibleTasks.forEach((t) => {
       const key = t.assigned_to ?? "__team";
       const row = rows.get(key) ?? { id: t.assigned_to, total: 0, done: 0, pending: [] };
       row.total += 1;
@@ -675,7 +674,7 @@ export default function ChecklistPage() {
       rows.set(key, row);
     });
     return Array.from(rows.values()).sort((a, b) => b.total - a.total);
-  }, [visibleToday, logs, selectedDate]);
+  }, [visibleTasks, logs]);
 
   const manageList = useMemo(() => {
     let filtered = templates.filter((t) => !t.is_one_time);
@@ -684,20 +683,6 @@ export default function ChecklistPage() {
     }
     return filtered.sort((a, b) => a.title.localeCompare(b.title));
   }, [templates, filterEmpresa]);
-
-  function handlePeriodoChange(val: string) {
-    setPeriodoFiltro(val);
-    const d = new Date();
-    if (val === "ontem") {
-      d.setDate(d.getDate() - 1);
-      setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-    } else if (val === "hoje") {
-      setSelectedDate(todayLocal());
-    } else if (val === "amanha") {
-      d.setDate(d.getDate() + 1);
-      setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-    }
-  }
 
   if (loading) {
     return (
@@ -708,7 +693,7 @@ export default function ChecklistPage() {
   }
 
   const tabs = [
-    { id: "daily" as const, label: "Checklist do Dia", icon: CheckSquare },
+    { id: "daily" as const, label: "Checklist do Período", icon: CheckSquare },
     ...(!isColaborador
       ? [
           { id: "reports" as const, label: "Acompanhamento", icon: Users },
@@ -717,7 +702,7 @@ export default function ChecklistPage() {
       : []),
   ];
 
-  const isToday = selectedDate === todayLocal();
+  const isTodaySelected = startDate === todayLocal() && endDate === todayLocal();
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -743,40 +728,33 @@ export default function ChecklistPage() {
             </select>
           </label>
 
-          <div className="flex items-center gap-1.5 rounded-lg border bg-white px-2 py-1.5 text-sm">
-            <select
-              value={periodoFiltro}
-              onChange={(e) => handlePeriodoChange(e.target.value)}
-              className="bg-transparent outline-none font-medium text-slate-700 cursor-pointer pr-1 border-r border-slate-200 mr-1"
-            >
-              <option value="personalizado">Período:</option>
-              <option value="ontem">Ontem</option>
-              <option value="hoje">Hoje</option>
-              <option value="amanha">Amanhã</option>
-            </select>
-
-            <label className="flex items-center gap-1.5 px-1 cursor-pointer">
-              <Calendar className="h-4 w-4 text-slate-500" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setSelectedDate(e.target.value);
-                    setPeriodoFiltro("personalizado");
-                  }
-                }}
-                className="bg-transparent outline-none cursor-pointer"
-              />
-            </label>
+          {/* Intervalo de Datas */}
+          <div className="flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-sm">
+            <Calendar className="h-4 w-4 text-slate-500 shrink-0" />
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => e.target.value && setStartDate(e.target.value)}
+              className="bg-transparent outline-none cursor-pointer text-xs"
+              title="Data Inicial"
+            />
+            <span className="text-slate-400">até</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => e.target.value && setEndDate(e.target.value)}
+              className="bg-transparent outline-none cursor-pointer text-xs"
+              title="Data Final"
+            />
             <button
               type="button"
               onClick={() => {
-                setSelectedDate(todayLocal());
-                setPeriodoFiltro("hoje");
+                const t = todayLocal();
+                setStartDate(t);
+                setEndDate(t);
               }}
-              className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                isToday 
+              className={`ml-1 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                isTodaySelected 
                   ? "bg-primary text-white" 
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
@@ -828,7 +806,7 @@ export default function ChecklistPage() {
           <div className="rounded-xl border bg-white p-4">
             <div className="mb-2 flex items-center justify-between text-sm">
               <span className="font-medium text-slate-700">
-                {doneCount} de {visibleToday.length} concluídas
+                {doneCount} de {visibleTasks.length} concluídas no período
               </span>
               <span className={`font-semibold ${pct === 100 ? "text-emerald-600" : pct >= 50 ? "text-amber-600" : "text-red-600"}`}>
                 {pct}%
@@ -842,12 +820,12 @@ export default function ChecklistPage() {
             </div>
           </div>
 
-          {visibleToday.length === 0 ? (
+          {visibleTasks.length === 0 ? (
             <div className="flex flex-col items-center rounded-xl border border-dashed bg-white py-14 text-center">
               <FolderCheck className="mb-3 h-8 w-8 text-slate-400" />
               <p className="font-medium text-slate-700">Nenhuma tarefa encontrada</p>
               <p className="mt-1 text-sm text-slate-500">
-                {isColaborador ? "Verifique o filtro de empresa ou aproveite o dia! 🎉" : "Cadastre rotinas na aba \"Gerenciar Rotinas\"."}
+                {isColaborador ? "Verifique o filtro de empresa ou aproveite o período! 🎉" : "Cadastre rotinas na aba \"Gerenciar Rotinas\"."}
               </p>
             </div>
           ) : (
@@ -1015,7 +993,7 @@ export default function ChecklistPage() {
         <div className="space-y-4">
           {report.length === 0 ? (
             <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
-              Nenhuma rotina prevista para a empresa selecionada nesta data.
+              Nenhuma rotina prevista para a empresa selecionada neste período.
             </div>
           ) : (
             report.map((row) => {
