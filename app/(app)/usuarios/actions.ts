@@ -16,6 +16,7 @@ const createUserSchema = z.object({
   password: z.string().min(8, "A senha provisória deve ter ao menos 8 caracteres."),
   role: roleSchema,
   department: z.string().trim().max(80).optional().transform((v) => v || null),
+  empresas: z.array(z.string()).optional().default([]),
 });
 
 export type CreateUserInput = z.input<typeof createUserSchema>;
@@ -40,10 +41,15 @@ export async function createUser(input: CreateUserInput): Promise<ActionResult> 
     });
     if (error) throw error;
 
-    // O trigger cria o profile como 'member'; aplicamos o cargo escolhido.
+    // O trigger cria o profile; aplicamos o cargo, nome, departamento e as empresas.
     const { error: profileError } = await admin
       .from("profiles")
-      .update({ role: data.role, full_name: data.full_name, department: data.department })
+      .update({ 
+        role: data.role, 
+        full_name: data.full_name, 
+        department: data.department,
+        empresas: data.empresas 
+      })
       .eq("id", created.user.id);
     if (profileError) throw profileError;
 

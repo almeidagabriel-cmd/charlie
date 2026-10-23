@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Loader2, Wand2 } from "lucide-react";
+import { Loader2, Wand2, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { createUser, type CreateUserInput } from "@/app/(app)/usuarios/actions";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ROLE_LABEL, ROLES } from "@/lib/constants";
 import type { UserRole } from "@/lib/types";
 
-const EMPTY: CreateUserInput = { email: "", full_name: "", password: "", role: "member", department: "" };
+const EMPRESAS = [
+  "Serra Carioca",
+  "Feitoria Cozinha",
+  "Casa Cônego",
+  "Savá Padaria",
+  "Rua Burguer",
+  "Rua Pizza / Feito Brasa",
+  "Produção Central",
+];
+
+const EMPTY: CreateUserInput = { email: "", full_name: "", password: "", role: "member", department: "", empresas: [] };
 
 function generatePassword() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -33,10 +43,18 @@ export function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
-    if (open) setForm({ ...EMPTY, password: generatePassword() });
+    if (open) setForm({ ...EMPTY, password: generatePassword(), empresas: [] });
   }, [open]);
 
   const set = <K extends keyof CreateUserInput>(k: K, v: CreateUserInput[K]) => setForm((f) => ({ ...f, [k]: v }));
+
+  function toggleEmpresa(empresa: string) {
+    const atual = form.empresas || [];
+    const novas = atual.includes(empresa)
+      ? atual.filter((e) => e !== empresa)
+      : [...atual, empresa];
+    set("empresas", novas);
+  }
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -52,7 +70,7 @@ export function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Novo usuário</DialogTitle>
           <DialogDescription>A conta é criada já confirmada, com uma senha provisória.</DialogDescription>
@@ -81,6 +99,30 @@ export function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpen
               <Input id="u-dept" value={form.department ?? ""} onChange={(e) => set("department", e.target.value)} />
             </div>
           </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <Building2 className="h-4 w-4 text-slate-500" /> Empresas Vinculadas
+            </Label>
+            <div className="grid grid-cols-1 gap-2 rounded-lg border p-3 sm:grid-cols-2 bg-slate-50/50">
+              {EMPRESAS.map((emp) => {
+                const checked = (form.empresas || []).includes(emp);
+                return (
+                  <label key={emp} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleEmpresa(emp)}
+                      className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                    />
+                    <span className={checked ? "font-medium text-slate-800" : "text-slate-600"}>{emp}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">O colaborador só enxergará as tarefas das empresas selecionadas aqui.</p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="u-pass">Senha provisória *</Label>
             <div className="flex gap-2">

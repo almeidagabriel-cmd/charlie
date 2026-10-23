@@ -9,6 +9,7 @@ export interface Profile {
   full_name: string | null;
   role: UserRole;
   department: string | null;
+  empresas?: string[] | null; // <--- Adicione esta linha
   avatar_url: string | null;
   is_active: boolean;
   created_at: string;
