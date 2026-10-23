@@ -34,6 +34,7 @@ export const ROLE_LABEL: Record<UserRole, string> = {
   admin: "Administrador",
   manager: "Gestor",
   member: "Colaborador",
+  diretor: "Diretor",
 };
 
 export const ROLES = Object.keys(ROLE_LABEL) as UserRole[];
