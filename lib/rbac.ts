@@ -1,6 +1,6 @@
 import type { SessionUser, Task, TaskStatus, UserRole } from "./types";
 
-export const ALL_ROLES: UserRole[] = ["admin", "manager", "member"];
+export const ALL_ROLES: UserRole[] = ["admin", "manager", "member", "diretor"];
 
 /** Rotas acessíveis sem sessão. */
 export const PUBLIC_ROUTES = ["/login", "/auth"];

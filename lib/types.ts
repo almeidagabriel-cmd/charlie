@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "manager" | "member";
+export const ALL_ROLES: UserRole[] = ["admin", "manager", "member", "diretor"];
 export type ProjectStatus = "planejamento" | "em_andamento" | "pausado" | "concluido";
 export type TaskStatus = "backlog" | "todo" | "in_progress" | "in_review" | "done";
 export type TaskPriority = "baixa" | "media" | "alta" | "urgente";
