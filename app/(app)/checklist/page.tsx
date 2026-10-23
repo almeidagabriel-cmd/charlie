@@ -102,7 +102,7 @@ const EMPRESAS = [
   "Rua Burguer",
   "Feito Brasa",
   "Produção Central",
-  "Distribuidora", // <--- Adicionado aqui
+  "Distribuidora",
 ];
 
 function todayLocal() {
@@ -676,11 +676,11 @@ export default function ChecklistPage() {
   }, [visibleToday, logs, selectedDate]);
 
   const manageList = useMemo(() => {
-    let filtered = [...templates];
+    let filtered = templates.filter((t) => !t.is_one_time);
     if (filterEmpresa !== "all") {
        filtered = filtered.filter(t => t.empresa === filterEmpresa);
     }
-    return filtered.sort((a, b) => Number(a.is_one_time) - Number(b.is_one_time) || a.title.localeCompare(b.title));
+    return filtered.sort((a, b) => a.title.localeCompare(b.title));
   }, [templates, filterEmpresa]);
 
   if (loading) {
@@ -1252,8 +1252,8 @@ export default function ChecklistPage() {
               <select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} required className={inputCls}>
                 <option value="">Selecione a Empresa</option>
                 {isColaborador && currentUserProfile?.empresas 
-                 ? currentUserProfile.empresas.map(e => <option key={e} value={e}>{e}</option>)
-                 : EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)
+                   ? currentUserProfile.empresas.map(e => <option key={e} value={e}>{e}</option>)
+                   : EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)
                 }
               </select>
             </Field>
