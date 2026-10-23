@@ -176,6 +176,10 @@ export default function ChecklistPage() {
   const [newRequiresInput, setNewRequiresInput] = useState(false);
   const [newInputLabel, setNewInputLabel] = useState("");
   const [newRequiresPhoto, setNewRequiresPhoto] = useState(false);
+  
+  const [formSubtasks, setFormSubtasks] = useState<string[]>([]);
+  const [formSubtaskInput, setFormSubtaskInput] = useState("");
+
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<Template | null>(null);
 
@@ -480,7 +484,7 @@ export default function ChecklistPage() {
     setNewCustomDays((prev) => (prev.includes(dayVal) ? prev.filter((d) => d !== dayVal) : [...prev, dayVal]));
   }
 
-  function handleStartEdit(template: Template) {
+  async function handleStartEdit(template: Template) {
     setEditingTemplateId(template.id);
     setNewTitle(template.title);
     setNewDesc(template.description || "");
@@ -492,6 +496,11 @@ export default function ChecklistPage() {
     setNewRequiresInput(template.requires_input || false);
     setNewInputLabel(template.input_label || "");
     setNewRequiresPhoto(template.requires_photo || false);
+    
+    const currentSubs = subtasks[template.id] || [];
+    setFormSubtasks(currentSubs.map((s) => s.title));
+    setFormSubtaskInput("");
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -507,6 +516,8 @@ export default function ChecklistPage() {
     setNewRequiresInput(false);
     setNewInputLabel("");
     setNewRequiresPhoto(false);
+    setFormSubtasks([]);
+    setFormSubtaskInput("");
   }
 
   async function handleSaveTemplate(e: React.FormEvent) {
@@ -537,16 +548,30 @@ export default function ChecklistPage() {
           .insert({ ...payload, created_by: currentUser, is_one_time: false })
           .select()
           .single();
-    setSavingTemplate(false);
 
-    if (result.error) return void toast.error("Não foi possível salvar", { description: result.error.message });
+    if (result.error) {
+      setSavingTemplate(false);
+      return void toast.error("Não foi possível salvar", { description: result.error.message });
+    }
 
     const saved = result.data as Template;
+
+    if (formSubtasks.length > 0) {
+      const subtaskInserts = formSubtasks.map((stTitle) => ({
+        checklist_item_id: saved.id,
+        title: stTitle,
+        completed: false,
+      }));
+      await supabase.from("checklist_subtasks").insert(subtaskInserts);
+    }
+
+    setSavingTemplate(false);
     setTemplates((prev) =>
       editingTemplateId ? prev.map((t) => (t.id === saved.id ? saved : t)) : [...prev, saved],
     );
     toast.success(editingTemplateId ? "Rotina atualizada." : "Rotina criada.");
     handleCancelEdit();
+    fetchSubtasks([saved.id]);
   }
 
   async function handleDeleteTemplate() {
@@ -998,6 +1023,47 @@ export default function ChecklistPage() {
                 ))}
               </div>
             )}
+
+            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+              <span className="text-sm font-medium text-slate-700">Subtarefas Padrão (Passos)</span>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Ex: Verificar temperatura"
+                  value={formSubtaskInput}
+                  onChange={(e) => setFormSubtaskInput(e.target.value)}
+                  className={inputCls}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (formSubtaskInput.trim()) {
+                      setFormSubtasks((prev) => [...prev, formSubtaskInput.trim()]);
+                      setFormSubtaskInput("");
+                    }
+                  }}
+                  className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700"
+                >
+                  Adicionar
+                </button>
+              </div>
+              {formSubtasks.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {formSubtasks.map((st, idx) => (
+                    <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
+                      <span>{st}</span>
+                      <button
+                        type="button"
+                        onClick={() => setFormSubtasks((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
               <label className="flex items-center gap-2 text-sm text-slate-700">
