@@ -34,7 +34,7 @@ export function Sidebar({ profile }: { profile: Profile }) {
     ? [{ href: "/checklist", label: "Checklist Diário", icon: CheckSquare }]
     : [
         { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
-        { href: "/planejamento", label: "Planeamento", icon: KanbanSquare },
+        { href: "/planejamento", label: "Planejamento", icon: KanbanSquare },
         ...(rawRole === "admin" ? [{ href: "/usuarios", label: "Usuários", icon: Users }] : []),
       ];
 
