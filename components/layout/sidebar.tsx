@@ -29,11 +29,12 @@ export function Sidebar({ profile }: { profile: Profile }) {
   const rawRole = profile?.role ?? "member";
   const isColaborador = rawRole === "member";
 
-  // Exibe apenas o Checklist Diário (e Usuários para admin) temporariamente
+  // Itens do menu baseados no cargo do usuário
   const items = isColaborador
     ? [{ href: "/checklist", label: "Checklist Diário", icon: CheckSquare }]
     : [
         { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
+        { href: "/planejamento", label: "Planeamento", icon: KanbanSquare },
         ...(rawRole === "admin" ? [{ href: "/usuarios", label: "Usuários", icon: Users }] : []),
       ];
 
