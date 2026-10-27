@@ -29,6 +29,8 @@ import {
   EyeOff,
   Eye,
   ArrowUpRight,
+  MessageSquare,
+  Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -74,12 +76,21 @@ interface Log {
   photo_url?: string | null;
 }
 
+interface SubtaskComment {
+  id: string;
+  subtask_id: string;
+  user_id: string;
+  comment: string;
+  created_at: string;
+}
+
 interface Subtask {
   id: string;
   checklist_item_id: string;
   title: string;
   completed: boolean;
   assigned_to?: string | null;
+  comments?: SubtaskComment[];
 }
 
 interface FormSubtask {
@@ -192,6 +203,10 @@ export default function ChecklistPage() {
   
   const [newSubtaskTexts, setNewSubtaskTexts] = useState<Record<string, string>>({});
   const [newSubtaskAssignedTo, setNewSubtaskAssignedTo] = useState<Record<string, string>>({});
+  
+  // Estados para gerenciar comentários nas subtarefas
+  const [expandedSubtaskComments, setExpandedSubtaskComments] = useState<Record<string, boolean>>({});
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
   const [oneTimeDoneBefore, setOneTimeDoneBefore] = useState<Set<string>>(new Set());
   const [users, setUsers] = useState<Profile[]>([]);
@@ -342,10 +357,32 @@ export default function ChecklistPage() {
       .in("checklist_item_id", templateIds);
 
     if (!error && data) {
+      const subtaskIds = data.map((s: Subtask) => s.id);
+      
+      // Busca também os comentários destas subtarefas
+      let commentsMap: Record<string, SubtaskComment[]> = {};
+      if (subtaskIds.length > 0) {
+        const { data: commentsData } = await supabase
+          .from("checklist_subtask_comments")
+          .select("*")
+          .in("subtask_id", subtaskIds)
+          .order("created_at", { ascending: true });
+          
+        if (commentsData) {
+          commentsData.forEach((c: SubtaskComment) => {
+            if (!commentsMap[c.subtask_id]) commentsMap[c.subtask_id] = [];
+            commentsMap[c.subtask_id].push(c);
+          });
+        }
+      }
+
       const map: Record<string, Subtask[]> = {};
       data.forEach((s: Subtask) => {
         if (!map[s.checklist_item_id]) map[s.checklist_item_id] = [];
-        map[s.checklist_item_id].push(s);
+        map[s.checklist_item_id].push({
+          ...s,
+          comments: commentsMap[s.id] || []
+        });
       });
       setSubtasks(map);
     }
@@ -394,9 +431,53 @@ export default function ChecklistPage() {
       setSubtasks((prev) => ({
         ...prev,
         [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).map((s) =>
-          s.id === subtask.id ? data : s
+          s.id === subtask.id ? { ...data, comments: s.comments } : s
         ),
       }));
+    }
+  }
+
+  async function handleAddComment(subtask: Subtask, e: React.FormEvent) {
+    e.preventDefault();
+    const text = commentInputs[subtask.id]?.trim();
+    if (!text || !currentUser) return;
+
+    const { data, error } = await supabase
+      .from("checklist_subtask_comments")
+      .insert({
+        subtask_id: subtask.id,
+        user_id: currentUser,
+        comment: text,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      toast.error("Erro ao enviar comentário");
+      return;
+    }
+
+    if (data) {
+      setSubtasks((prev) => ({
+        ...prev,
+        [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).map((s) =>
+          s.id === subtask.id ? { ...s, comments: [...(s.comments || []), data] } : s
+        ),
+      }));
+      setCommentInputs((prev) => ({ ...prev, [subtask.id]: "" }));
+
+      // Notifica o responsável da subtarefa ou o criador se necessário
+      if (subtask.assigned_to && subtask.assigned_to !== currentUser) {
+        const senderName = currentUserProfile?.full_name || "Alguém";
+        await supabase.from("notifications").insert({
+          user_id: subtask.assigned_to,
+          title: "Novo comentário em aprovação",
+          message: `${senderName} comentou na subtarefa: "${subtask.title}"`,
+        });
+        fetchNotifications();
+      }
+
+      toast.success("Comentário adicionado!");
     }
   }
 
@@ -426,7 +507,7 @@ export default function ChecklistPage() {
     if (data) {
       setSubtasks((prev) => ({
         ...prev,
-        [templateId]: [...(prev[templateId] || []), data],
+        [templateId]: [...(prev[templateId] || []), { ...data, comments: [] }],
       }));
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
       setNewSubtaskAssignedTo((prev) => ({ ...prev, [templateId]: "" }));
@@ -1149,46 +1230,103 @@ export default function ChecklistPage() {
                             )}
 
                             {isExpanded && (
-                              <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-3">
-                                <p className="text-xs font-semibold text-slate-600">Subtarefas / Passos:</p>
+                              <div className="mt-3 space-y-3 rounded-lg bg-slate-50 p-3">
+                                <p className="text-xs font-semibold text-slate-600">Perguntas / Passos de Aprovação:</p>
                                 {itemSubtasks.length === 0 ? (
-                                  <p className="text-xs text-slate-400">Nenhuma subtarefa adicionada.</p>
+                                  <p className="text-xs text-slate-400">Nenhuma pergunta ou passo adicionado.</p>
                                 ) : (
-                                  <ul className="space-y-1.5">
-                                    {itemSubtasks.map((sub) => (
-                                      <li key={sub.id} className="flex items-center justify-between gap-2 text-sm">
-                                        <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
-                                          <input
-                                            type="checkbox"
-                                            checked={sub.completed}
-                                            onChange={() => handleToggleSubtask(sub)}
-                                            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary mt-0.5 shrink-0"
-                                          />
-                                          <span className={`break-words ${sub.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
-                                            {sub.title}
-                                            {sub.assigned_to && (
-                                              <span className="ml-2 inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
-                                                <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
+                                  <ul className="space-y-3">
+                                    {itemSubtasks.map((sub) => {
+                                      const showComments = !!expandedSubtaskComments[sub.id];
+                                      const commentsList = sub.comments || [];
+
+                                      return (
+                                        <li key={sub.id} className="rounded-lg bg-white p-2.5 border shadow-sm">
+                                          <div className="flex items-start justify-between gap-2">
+                                            <label className="flex items-start gap-2 cursor-pointer select-none flex-1">
+                                              <input
+                                                type="checkbox"
+                                                checked={sub.completed}
+                                                onChange={() => handleToggleSubtask(sub)}
+                                                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary mt-0.5 shrink-0"
+                                              />
+                                              <span className={`break-words text-sm font-medium ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                                                {sub.title}
+                                                {sub.assigned_to && (
+                                                  <span className="ml-2 inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                                                    <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
+                                                  </span>
+                                                )}
                                               </span>
-                                            )}
-                                          </span>
-                                        </label>
-                                        <button
-                                          onClick={() => handleDeleteSubtask(sub)}
-                                          className="text-slate-400 hover:text-red-600 shrink-0 ml-2"
-                                          title="Excluir subtarefa"
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                      </li>
-                                    ))}
+                                            </label>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                              <button
+                                                onClick={() => setExpandedSubtaskComments(prev => ({ ...prev, [sub.id]: !prev[sub.id] }))}
+                                                className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                                                  commentsList.length > 0 ? "bg-primary/10 text-primary" : "text-slate-500 hover:bg-slate-100"
+                                                }`}
+                                                title="Comentários / Conversa"
+                                              >
+                                                <MessageSquare className="h-3.5 w-3.5" />
+                                                <span>{commentsList.length}</span>
+                                              </button>
+                                              <button
+                                                onClick={() => handleDeleteSubtask(sub)}
+                                                className="text-slate-400 hover:text-red-600 p-1"
+                                                title="Excluir"
+                                              >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          {/* Seção de Comentários */}
+                                          {showComments && (
+                                            <div className="mt-3 border-t pt-2.5 space-y-2">
+                                              {commentsList.length > 0 && (
+                                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                                  {commentsList.map((c) => (
+                                                    <div key={c.id} className="rounded bg-slate-50 p-2 text-xs">
+                                                      <div className="flex items-center justify-between font-semibold text-slate-700 mb-0.5">
+                                                        <span>{userName(c.user_id)}</span>
+                                                        <span className="text-[10px] text-slate-400 font-normal">
+                                                          {new Date(c.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
+                                                        </span>
+                                                      </div>
+                                                      <p className="text-slate-600 whitespace-pre-wrap">{c.comment}</p>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+
+                                              <form onSubmit={(e) => handleAddComment(sub, e)} className="flex gap-1.5 pt-1">
+                                                <input
+                                                  type="text"
+                                                  placeholder="Escreva um comentário ou resposta..."
+                                                  value={commentInputs[sub.id] || ""}
+                                                  onChange={(e) => setCommentInputs(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                                                  className="flex-1 rounded border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+                                                />
+                                                <button
+                                                  type="submit"
+                                                  className="flex items-center justify-center rounded bg-primary px-2.5 py-1.5 text-white hover:bg-primary/90"
+                                                  title="Enviar comentário"
+                                                >
+                                                  <Send className="h-3.5 w-3.5" />
+                                                </button>
+                                              </form>
+                                            </div>
+                                          )}
+                                        </li>
+                                      );
+                                    })}
                                   </ul>
                                 )}
 
-                                <form onSubmit={(e) => handleAddSubtask(t.id, e)} className="mt-3 flex flex-wrap gap-2 sm:flex-nowrap">
+                                <form onSubmit={(e) => handleAddSubtask(t.id, e)} className="mt-3 flex flex-wrap gap-2 sm:flex-nowrap pt-2 border-t">
                                   <input
                                     type="text"
-                                    placeholder="Adicionar nova subtarefa..."
+                                    placeholder="Adicionar nova pergunta ou passo..."
                                     value={newSubtaskTexts[t.id] || ""}
                                     onChange={(e) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: e.target.value }))}
                                     className="flex-1 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-primary min-w-[200px]"
@@ -1568,7 +1706,7 @@ export default function ChecklistPage() {
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria">
-                <select value={oneTimeCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>
+                <select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>
                   {CATEGORIES.map((c) => (
                     <option key={c} value={c}>{c}</option>
                   ))}
