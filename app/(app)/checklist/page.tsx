@@ -26,6 +26,8 @@ import {
   X,
   Zap,
   Bell,
+  EyeOff,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -197,6 +199,7 @@ export default function ChecklistPage() {
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [hideCompleted, setHideCompleted] = useState(false);
   
   const [startDate, setStartDate] = useState(todayLocal());
   const [endDate, setEndDate] = useState(todayLocal());
@@ -730,6 +733,11 @@ export default function ChecklistPage() {
     });
   }, [templates, startDate, endDate, oneTimeDoneBefore]);
 
+  const isDone = (t: Template) => {
+    const l = logs[t.id];
+    return !!l && l.completed;
+  };
+
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
@@ -744,14 +752,11 @@ export default function ChecklistPage() {
         hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) || t.empresa === "Todas / Grupo B&A" : true;
       }
 
-      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa;
-    });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks]);
+      const matchesCompletion = !hideCompleted || !isDone(t);
 
-  const isDone = (t: Template) => {
-    const l = logs[t.id];
-    return !!l && l.completed;
-  };
+      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa && matchesCompletion;
+    });
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, hideCompleted, logs]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Template[]>();
@@ -762,8 +767,9 @@ export default function ChecklistPage() {
     return Array.from(map.entries()).sort(([a], [b]) => (a.startsWith("⚡") ? -1 : b.startsWith("⚡") ? 1 : a.localeCompare(b)));
   }, [visibleTasks]);
 
-  const doneCount = visibleTasks.filter(isDone).length;
-  const pct = visibleTasks.length ? Math.round((doneCount / visibleTasks.length) * 100) : 0;
+  const doneCount = dueInRange.filter(isDone).length;
+  const totalCount = dueInRange.length;
+  const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
   const report = useMemo(() => {
     const rows = new Map<string, { id: string | null; total: number; done: number; pending: Template[] }>();
@@ -819,6 +825,18 @@ export default function ChecklistPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           
+          {/* Botão de Ocultar/Mostrar Finalizadas */}
+          <button
+            onClick={() => setHideCompleted(!hideCompleted)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+              hideCompleted ? "bg-primary text-white border-primary" : "bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+            title={hideCompleted ? "Exibir concluídas" : "Ocultar concluídas"}
+          >
+            {hideCompleted ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            <span className="hidden sm:inline">{hideCompleted ? "Ocultando concluídas" : "Mostrar concluídas"}</span>
+          </button>
+
           {/* Sino de Notificações */}
           <div className="relative">
             <button
@@ -971,7 +989,7 @@ export default function ChecklistPage() {
           <div className="rounded-xl border bg-white p-4">
             <div className="mb-2 flex items-center justify-between text-sm">
               <span className="font-medium text-slate-700">
-                {doneCount} de {visibleTasks.length} concluídas no período
+                {doneCount} de {totalCount} concluídas no período
               </span>
               <span className={`font-semibold ${pct === 100 ? "text-emerald-600" : pct >= 50 ? "text-amber-600" : "text-red-600"}`}>
                 {pct}%
@@ -990,7 +1008,7 @@ export default function ChecklistPage() {
               <FolderCheck className="mb-3 h-8 w-8 text-slate-400" />
               <p className="font-medium text-slate-700">Nenhuma tarefa encontrada</p>
               <p className="mt-1 text-sm text-slate-500">
-                {isColaborador ? "Verifique os filtros ou aproveite o período! 🎉" : "Cadastre rotinas na aba \"Gerenciar Rotinas\"."}
+                {hideCompleted ? "Todas as tarefas do período já foram concluídas! 🎉" : "Nenhuma tarefa encontrada para os filtros selecionados."}
               </p>
             </div>
           ) : (
