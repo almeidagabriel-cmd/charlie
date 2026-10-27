@@ -221,6 +221,9 @@ export default function ChecklistPage() {
   const [oneTimeAssignedTo, setOneTimeAssignedTo] = useState("");
   const [oneTimeEmpresa, setOneTimeEmpresa] = useState("");
   const [oneTimeSetor, setOneTimeSetor] = useState("Geral / Todos");
+  const [oneTimeFormSubtasks, setOneTimeFormSubtasks] = useState<FormSubtask[]>([]);
+  const [oneTimeSubInput, setOneTimeSubInput] = useState("");
+  const [oneTimeSubAssignedTo, setOneTimeSubAssignedTo] = useState("");
 
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -588,13 +591,38 @@ export default function ChecklistPage() {
 
     if (error) return void toast.error("Não foi possível criar a tarefa", { description: error.message });
     if (data) {
+      if (oneTimeFormSubtasks.length > 0) {
+        const subtaskInserts = oneTimeFormSubtasks.map((st) => ({
+          checklist_item_id: data.id,
+          title: st.title,
+          assigned_to: st.assigned_to,
+          completed: false,
+        }));
+        const { data: insertedSubs } = await supabase.from("checklist_subtasks").insert(subtaskInserts).select();
+        if (insertedSubs) {
+          // Envia notificação para os responsáveis pelas subtarefas
+          for (const sub of insertedSubs) {
+            if (sub.assigned_to && sub.assigned_to !== currentUser) {
+              const senderName = currentUserProfile?.full_name || "Alguém";
+              await supabase.from("notifications").insert({
+                user_id: sub.assigned_to,
+                title: "Nova subtarefa atribuída",
+                message: `${senderName} marcou-o na subtarefa: "${sub.title}"`,
+              });
+            }
+          }
+        }
+        fetchSubtasks([data.id]);
+      }
+
       setTemplates((prev) => [...prev, data]);
       setOneTimeTitle("");
       setOneTimeDesc("");
       setOneTimeCategory("Geral");
       setOneTimeAssignedTo("");
+      setOneTimeFormSubtasks([]);
       setShowOneTimeModal(false);
-      toast.success("Tarefa extra criada.");
+      toast.success("Tarefa extra criada com sucesso.");
     }
   }
 
@@ -1504,10 +1532,10 @@ export default function ChecklistPage() {
       )}
 
       {showOneTimeModal && (
-        <Modal title="Nova tarefa extra" onClose={() => setShowOneTimeModal(false)}>
+        <Modal title="Nova tarefa / Pedido de aprovação" onClose={() => setShowOneTimeModal(false)}>
           <form onSubmit={handleCreateOneTimeTask} className="space-y-4">
             <p className="text-sm text-slate-500">
-              Aparece no checklist até ser concluída (não se repete).
+              Ideal para pedidos de orçamento, aprovações e tarefas pontuais.
             </p>
             
             <div className="grid grid-cols-2 gap-3">
@@ -1525,11 +1553,11 @@ export default function ChecklistPage() {
             </div>
 
             <Field label="Título *">
-              <input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} />
+              <input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} placeholder="Ex: Orçamento confraternização" />
             </Field>
             
-            <Field label="Descrição">
-              <textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} />
+            <Field label="Descrição / Detalhes">
+              <textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} placeholder="Descreva os valores, links ou observações..." />
             </Field>
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
@@ -1541,7 +1569,7 @@ export default function ChecklistPage() {
                 </select>
               </Field>
               {!isColaborador && (
-                <Field label="Responsável">
+                <Field label="Responsável Principal">
                   <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
                     <option value="">Todos / Equipe</option>
                     {users.map((u) => (
@@ -1551,13 +1579,74 @@ export default function ChecklistPage() {
                 </Field>
               )}
             </div>
+
+            {/* Secção de Subtarefas/Perguntas de Aprovação no Modal */}
+            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+              <span className="text-sm font-medium text-slate-700">Perguntas ou Passos de Aprovação</span>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Ex: Aprova este orçamento de R$ 920,00?"
+                  value={oneTimeSubInput}
+                  onChange={(e) => setOneTimeSubInput(e.target.value)}
+                  className={inputCls + " flex-1"}
+                />
+                <select
+                  value={oneTimeSubAssignedTo}
+                  onChange={(e) => setOneTimeSubAssignedTo(e.target.value)}
+                  className={inputCls + " max-w-[130px] !px-2 truncate"}
+                >
+                  <option value="">Equipe</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (oneTimeSubInput.trim()) {
+                      setOneTimeFormSubtasks((prev) => [...prev, { title: oneTimeSubInput.trim(), assigned_to: oneTimeSubAssignedTo || null }]);
+                      setOneTimeSubInput("");
+                      setOneTimeSubAssignedTo("");
+                    }
+                  }}
+                  className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700 shrink-0"
+                >
+                  Adicionar
+                </button>
+              </div>
+
+              {oneTimeFormSubtasks.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {oneTimeFormSubtasks.map((st, idx) => (
+                    <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="truncate">{st.title}</span>
+                        {st.assigned_to && (
+                          <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0">
+                            <UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOneTimeFormSubtasks((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-red-500 hover:text-red-700 ml-2 shrink-0"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             
             <div className="flex justify-end gap-2 mt-2">
               <button type="button" onClick={() => setShowOneTimeModal(false)} className="rounded-lg border px-4 py-2 text-sm">
                 Cancelar
               </button>
               <button type="submit" className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600">
-                <Zap className="h-4 w-4" /> Criar tarefa
+                <Zap className="h-4 w-4" /> Criar tarefa e enviar
               </button>
             </div>
           </form>
@@ -1591,7 +1680,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center" onClick={onClose}>
-      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <h3 className="font-semibold text-slate-900">{title}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700" aria-label="Fechar">
