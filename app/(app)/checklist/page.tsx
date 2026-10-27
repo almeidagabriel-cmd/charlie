@@ -28,6 +28,7 @@ import {
   Bell,
   EyeOff,
   Eye,
+  ArrowUpRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -51,6 +52,7 @@ interface Template {
   empresa: string | null;
   setor?: string | null;
   assigned_to: string | null;
+  created_by?: string | null;
   recurrence_type: RecurrenceType;
   recurrence_day: number | null;
   custom_days: number[] | null;
@@ -429,7 +431,6 @@ export default function ChecklistPage() {
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
       setNewSubtaskAssignedTo((prev) => ({ ...prev, [templateId]: "" }));
 
-      // Notifica sempre que houver um responsável atribuído na subtarefa
       if (assigned) {
         const senderName = currentUserProfile?.full_name || "Alguém";
         await supabase.from("notifications").insert({
@@ -1101,8 +1102,13 @@ export default function ChecklistPage() {
                                 </span>
                               )}
                               <span className="flex items-center gap-1">
-                                <UserIcon className="h-3.5 w-3.5" /> {userName(t.assigned_to)}
+                                <UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}
                               </span>
+                              {t.created_by && (
+                                <span className="flex items-center gap-1 text-amber-700 font-medium">
+                                  <ArrowUpRight className="h-3.5 w-3.5" /> Direcionado por: {userName(t.created_by)}
+                                </span>
+                              )}
                               {t.requires_input && (
                                 <span className="flex items-center gap-1">
                                   <FileText className="h-3.5 w-3.5" /> {t.input_label || "Requer valor"}
@@ -1562,7 +1568,7 @@ export default function ChecklistPage() {
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria">
-                <select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>
+                <select value={oneTimeCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>
                   {CATEGORIES.map((c) => (
                     <option key={c} value={c}>{c}</option>
                   ))}
