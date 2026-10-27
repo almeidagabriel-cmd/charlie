@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Briefcase,
   Building2,
   Calendar,
   Camera,
@@ -45,6 +46,7 @@ interface Template {
   description: string | null;
   category: string;
   empresa: string | null;
+  setor?: string | null;
   assigned_to: string | null;
   recurrence_type: RecurrenceType;
   recurrence_day: number | null;
@@ -95,6 +97,7 @@ const RECURRENCE_LABEL: Record<RecurrenceType, string> = {
 const CATEGORIES = ["Geral", "Abertura", "Fechamento", "Limpeza", "Estoque", "Financeiro", "Atendimento", "Urgente"];
 
 const EMPRESAS = [
+  "Todas / Grupo B&A",
   "Serra Carioca",
   "Feitoria Cozinha",
   "Casa Cônego",
@@ -103,6 +106,16 @@ const EMPRESAS = [
   "Feito Brasa",
   "Produção Central",
   "Distribuidora",
+];
+
+const SETORES = [
+  "Geral / Todos",
+  "Gestão & ADM",
+  "Marketing & Comunicação",
+  "Financeiro & Controladoria",
+  "Operacional / Salão",
+  "Cozinha & Produção",
+  "Compras & Suprimentos",
 ];
 
 function todayLocal() {
@@ -169,6 +182,7 @@ export default function ChecklistPage() {
   const [endDate, setEndDate] = useState(todayLocal());
   const [filterUser, setFilterUser] = useState<string>("all");
   const [filterEmpresa, setFilterEmpresa] = useState<string>("all");
+  const [filterSetor, setFilterSetor] = useState<string>("all");
   
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
@@ -183,12 +197,14 @@ export default function ChecklistPage() {
   const [oneTimeCategory, setOneTimeCategory] = useState("Urgente");
   const [oneTimeAssignedTo, setOneTimeAssignedTo] = useState("");
   const [oneTimeEmpresa, setOneTimeEmpresa] = useState("");
+  const [oneTimeSetor, setOneTimeSetor] = useState("Geral / Todos");
 
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newCategory, setNewCategory] = useState("Geral");
-  const [newEmpresa, setNewEmpresa] = useState<string>("");
+  const [newEmpresa, setNewEmpresa] = useState<string>("Todas / Grupo B&A");
+  const [newSetor, setNewSetor] = useState<string>("Geral / Todos");
   const [newAssignedTo, setNewAssignedTo] = useState<string>("");
   const [newRecurrenceType, setNewRecurrenceType] = useState<RecurrenceType>("daily");
   const [newRecurrenceDay, setNewRecurrenceDay] = useState<number>(1);
@@ -405,7 +421,7 @@ export default function ChecklistPage() {
   ) {
     setUploading(true);
     const currentLog = logs[templateId];
-    const targetDate = startDate; // Usa a data inicial do filtro para registo
+    const targetDate = startDate;
 
     const result =
       currentLog
@@ -481,7 +497,6 @@ export default function ChecklistPage() {
   async function handleCreateOneTimeTask(e: React.FormEvent) {
     e.preventDefault();
     if (!oneTimeTitle.trim()) return;
-    if (!oneTimeEmpresa) return void toast.error("Selecione a empresa para a tarefa extra.");
 
     const targetUser = isColaborador ? currentUser : oneTimeAssignedTo || null;
 
@@ -491,7 +506,8 @@ export default function ChecklistPage() {
         title: oneTimeTitle,
         description: oneTimeDesc,
         category: oneTimeCategory,
-        empresa: oneTimeEmpresa,
+        empresa: oneTimeEmpresa || "Todas / Grupo B&A",
+        setor: oneTimeSetor || "Geral / Todos",
         assigned_to: targetUser,
         created_by: currentUser,
         recurrence_type: "daily",
@@ -520,7 +536,8 @@ export default function ChecklistPage() {
     setNewTitle(template.title);
     setNewDesc(template.description || "");
     setNewCategory(template.category || "Geral");
-    setNewEmpresa(template.empresa || "");
+    setNewEmpresa(template.empresa || "Todas / Grupo B&A");
+    setNewSetor(template.setor || "Geral / Todos");
     setNewAssignedTo(template.assigned_to || "");
     setNewRecurrenceType(template.recurrence_type || "daily");
     setNewRecurrenceDay(template.recurrence_day || 1);
@@ -541,7 +558,8 @@ export default function ChecklistPage() {
     setNewTitle("");
     setNewDesc("");
     setNewCategory("Geral");
-    setNewEmpresa("");
+    setNewEmpresa("Todas / Grupo B&A");
+    setNewSetor("Geral / Todos");
     setNewAssignedTo("");
     setNewRecurrenceType("daily");
     setNewRecurrenceDay(1);
@@ -556,7 +574,6 @@ export default function ChecklistPage() {
   async function handleSaveTemplate(e: React.FormEvent) {
     e.preventDefault();
     if (!newTitle.trim()) return;
-    if (!newEmpresa) return void toast.error("Por favor, selecione a empresa vinculada.");
     if (newRecurrenceType === "custom" && newCustomDays.length === 0) {
       return void toast.error("Selecione ao menos um dia da semana.");
     }
@@ -565,7 +582,8 @@ export default function ChecklistPage() {
       title: newTitle,
       description: newDesc,
       category: newCategory,
-      empresa: newEmpresa,
+      empresa: newEmpresa || "Todas / Grupo B&A",
+      setor: newSetor || "Geral / Todos",
       assigned_to: newAssignedTo || null,
       recurrence_type: newRecurrenceType,
       recurrence_day: newRecurrenceType === "monthly" ? newRecurrenceDay : null,
@@ -628,23 +646,33 @@ export default function ChecklistPage() {
     return templates.filter((t) => {
       if (t.created_at && toLocalDateString(t.created_at) > endDate) return false;
       if (t.is_one_time) return !oneTimeDoneBefore.has(t.id);
-      return isDueOn(t, startDate);
+      
+      const start = parseLocalDate(startDate);
+      const end = parseLocalDate(endDate);
+      let curr = new Date(start);
+      while (curr <= end) {
+        const currStr = `${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, "0")}-${String(curr.getDate()).padStart(2, "0")}`;
+        if (isDueOn(t, currStr)) return true;
+        curr.setDate(curr.getDate() + 1);
+      }
+      return false;
     });
   }, [templates, startDate, endDate, oneTimeDoneBefore]);
 
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const matchesUser = filterUser === "all" || t.assigned_to === filterUser || (isColaborador && !t.assigned_to);
-      const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa;
+      const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
+      const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
 
       let hasAccessToEmpresa = true;
       if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
-        hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) : true;
+        hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) || t.empresa === "Todas / Grupo B&A" : true;
       }
 
-      return matchesUser && matchesEmpresa && hasAccessToEmpresa;
+      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa;
     });
-  }, [dueInRange, filterUser, filterEmpresa, isColaborador, currentUserProfile]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile]);
 
   const isDone = (t: Template) => {
     const l = logs[t.id];
@@ -679,10 +707,13 @@ export default function ChecklistPage() {
   const manageList = useMemo(() => {
     let filtered = templates.filter((t) => !t.is_one_time);
     if (filterEmpresa !== "all") {
-       filtered = filtered.filter(t => t.empresa === filterEmpresa);
+       filtered = filtered.filter(t => t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A");
+    }
+    if (filterSetor !== "all") {
+       filtered = filtered.filter(t => t.setor === filterSetor || t.setor === "Geral / Todos");
     }
     return filtered.sort((a, b) => a.title.localeCompare(b.title));
-  }, [templates, filterEmpresa]);
+  }, [templates, filterEmpresa, filterSetor]);
 
   if (loading) {
     return (
@@ -709,22 +740,33 @@ export default function ChecklistPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Checklist Diário</h1>
-          <p className="mt-1 text-sm text-slate-500">Rotinas operacionais, subtarefas e tarefas extras da equipe.</p>
+          <p className="mt-1 text-sm text-slate-500">Rotinas operacionais, subtarefas e tarefas extras por empresa e setor.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           
+          {/* Filtro por Empresa */}
           <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
             <Building2 className="h-4 w-4 text-slate-500" />
             <select 
               value={filterEmpresa} 
               onChange={(e) => setFilterEmpresa(e.target.value)} 
-              className="bg-transparent outline-none max-w-[120px] truncate"
+              className="bg-transparent outline-none max-w-[130px] truncate"
             >
-              <option value="all">Todas as Empresas</option>
-              {isColaborador && currentUserProfile?.empresas 
-                 ? currentUserProfile.empresas.map(e => <option key={e} value={e}>{e}</option>)
-                 : EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)
-              }
+              <option value="all">Todas Empresas</option>
+              {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+          </label>
+
+          {/* Filtro por Setor */}
+          <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
+            <Briefcase className="h-4 w-4 text-slate-500" />
+            <select 
+              value={filterSetor} 
+              onChange={(e) => setFilterSetor(e.target.value)} 
+              className="bg-transparent outline-none max-w-[130px] truncate"
+            >
+              <option value="all">Todos Setores</option>
+              {SETORES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
 
@@ -767,7 +809,7 @@ export default function ChecklistPage() {
             <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
               <Filter className="h-4 w-4 text-slate-500" />
               <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="bg-transparent outline-none max-w-[120px] truncate">
-                <option value="all">Todos os usuários</option>
+                <option value="all">Todos usuários</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
                 ))}
@@ -825,7 +867,7 @@ export default function ChecklistPage() {
               <FolderCheck className="mb-3 h-8 w-8 text-slate-400" />
               <p className="font-medium text-slate-700">Nenhuma tarefa encontrada</p>
               <p className="mt-1 text-sm text-slate-500">
-                {isColaborador ? "Verifique o filtro de empresa ou aproveite o período! 🎉" : "Cadastre rotinas na aba \"Gerenciar Rotinas\"."}
+                {isColaborador ? "Verifique os filtros ou aproveite o período! 🎉" : "Cadastre rotinas na aba \"Gerenciar Rotinas\"."}
               </p>
             </div>
           ) : (
@@ -882,8 +924,13 @@ export default function ChecklistPage() {
                             
                             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                               <span className="flex items-center gap-1 text-primary/80 font-medium">
-                                <Building2 className="h-3.5 w-3.5" /> {t.empresa || "Geral"}
+                                <Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas / Grupo B&A"}
                               </span>
+                              {t.setor && (
+                                <span className="flex items-center gap-1 text-indigo-600 font-medium">
+                                  <Briefcase className="h-3.5 w-3.5" /> {t.setor}
+                                </span>
+                              )}
                               <span className="flex items-center gap-1">
                                 <UserIcon className="h-3.5 w-3.5" /> {userName(t.assigned_to)}
                               </span>
@@ -993,7 +1040,7 @@ export default function ChecklistPage() {
         <div className="space-y-4">
           {report.length === 0 ? (
             <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
-              Nenhuma rotina prevista para a empresa selecionada neste período.
+              Nenhuma rotina prevista para os filtros selecionados neste período.
             </div>
           ) : (
             report.map((row) => {
@@ -1025,7 +1072,9 @@ export default function ChecklistPage() {
                       </p>
                       <ul className="space-y-0.5 text-sm text-slate-600">
                         {row.pending.map((t) => (
-                          <li key={t.id}>{t.title} <span className="text-xs opacity-60">({t.empresa})</span></li>
+                          <li key={t.id}>
+                            {t.title} <span className="text-xs opacity-60">({t.empresa} - {t.setor})</span>
+                          </li>
                         ))}
                       </ul>
                     </div>
@@ -1049,14 +1098,23 @@ export default function ChecklistPage() {
               )}
             </div>
 
-            <Field label="Empresa *">
-              <select value={newEmpresa} onChange={(e) => setNewEmpresa(e.target.value)} required className={inputCls}>
-                <option value="">Selecione a Empresa</option>
-                {EMPRESAS.map((e) => (
-                  <option key={e} value={e}>{e}</option>
-                ))}
-              </select>
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Empresa">
+                <select value={newEmpresa} onChange={(e) => setNewEmpresa(e.target.value)} className={inputCls}>
+                  {EMPRESAS.map((e) => (
+                    <option key={e} value={e}>{e}</option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Setor / Depto">
+                <select value={newSetor} onChange={(e) => setNewSetor(e.target.value)} className={inputCls}>
+                  {SETORES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
 
             <Field label="Título *">
               <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required className={inputCls} />
@@ -1199,7 +1257,7 @@ export default function ChecklistPage() {
               <span>Rotinas cadastradas ({manageList.length})</span>
             </header>
             {manageList.length === 0 ? (
-              <p className="py-10 text-center text-sm text-slate-500">Nenhuma rotina cadastrada para esta empresa.</p>
+              <p className="py-10 text-center text-sm text-slate-500">Nenhuma rotina cadastrada para estes filtros.</p>
             ) : (
               <ul className="divide-y max-h-[700px] overflow-y-auto">
                 {manageList.map((t) => (
@@ -1210,7 +1268,7 @@ export default function ChecklistPage() {
                         {t.title}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500 font-medium text-primary">
-                         {t.empresa}
+                         {t.empresa || "Todas / Grupo B&A"} {t.setor ? `· ${t.setor}` : ""}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500">
                         {t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}
@@ -1276,15 +1334,19 @@ export default function ChecklistPage() {
               Aparece no checklist até ser concluída (não se repete).
             </p>
             
-            <Field label="Empresa *">
-              <select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} required className={inputCls}>
-                <option value="">Selecione a Empresa</option>
-                {isColaborador && currentUserProfile?.empresas 
-                   ? currentUserProfile.empresas.map(e => <option key={e} value={e}>{e}</option>)
-                   : EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)
-                }
-              </select>
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Empresa">
+                <select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>
+                  {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </Field>
+
+              <Field label="Setor / Depto">
+                <select value={oneTimeSetor} onChange={(e) => setOneTimeSetor(e.target.value)} className={inputCls}>
+                  {SETORES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Field>
+            </div>
 
             <Field label="Título *">
               <input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} />
