@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BookOpen, FileText, Loader2, Plus, Trash2, X, Download } from "lucide-react";
+import { BookOpen, FileText, Loader2, Plus, Trash2, X, PlayCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 
 interface IT {
   id: string;
   title: string;
-  description: string;
+  description: string | null;
+  content: string | null;
+  video_url: string | null;
   target_role: string;
   empresa: string | null;
   file_url: string | null;
@@ -23,11 +25,14 @@ export default function WorkInstructionsPage() {
   const [instructions, setInstructions] = useState<IT[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [userRole, setUserRole] = useState("Todos");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const [newVideoUrl, setNewVideoUrl] = useState("");
   const [newRole, setNewRole] = useState("Todos");
   const [newEmpresa, setNewEmpresa] = useState("Todas");
   const [file, setFile] = useState<File | null>(null);
@@ -49,8 +54,6 @@ export default function WorkInstructionsPage() {
         
       if (profile) {
         setIsAdmin(profile.role !== "member");
-        // Aqui você pode associar a função real do usuário se tiver no profile
-        // setUserRole(profile.funcao || "Todos"); 
       }
     }
 
@@ -66,35 +69,42 @@ export default function WorkInstructionsPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!newTitle) return toast.error("Preencha o título.");
-    if (!file) return toast.error("Anexe um ficheiro (PDF ou Imagem).");
-
-    setUploading(true);
-    
-    // Upload do ficheiro
-    const fileExt = file.name.split(".").pop();
-    const fileName = `${Date.now()}.${fileExt}`;
-    const { error: uploadError } = await supabase.storage
-      .from("it-files")
-      .upload(fileName, file);
-
-    if (uploadError) {
-      setUploading(false);
-      return toast.error("Erro ao enviar ficheiro.");
+    if (!newContent && !file && !newVideoUrl) {
+      return toast.error("Forneça um passo a passo escrito, um link de vídeo ou anexe um arquivo.");
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from("it-files")
-      .getPublicUrl(fileName);
+    setUploading(true);
+    let finalFileUrl = null;
+    
+    if (file) {
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from("it-files")
+        .upload(fileName, file);
 
-    // Guardar na base de dados
+      if (uploadError) {
+        setUploading(false);
+        return toast.error("Erro ao enviar arquivo anexado.");
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from("it-files")
+        .getPublicUrl(fileName);
+        
+      finalFileUrl = publicUrlData.publicUrl;
+    }
+
     const { data, error } = await supabase
       .from("work_instructions")
       .insert({
         title: newTitle,
-        description: newDesc,
+        description: newDesc || null,
+        content: newContent || null,
+        video_url: newVideoUrl || null,
         target_role: newRole,
         empresa: newEmpresa === "Todas" ? null : newEmpresa,
-        file_url: publicUrlData.publicUrl
+        file_url: finalFileUrl
       })
       .select()
       .single();
@@ -106,20 +116,20 @@ export default function WorkInstructionsPage() {
     setInstructions([data, ...instructions]);
     setShowModal(false);
     toast.success("Instrução de trabalho adicionada!");
-    // Limpar form
-    setNewTitle(""); setNewDesc(""); setFile(null); setNewRole("Todos"); setNewEmpresa("Todas");
+    
+    setNewTitle(""); setNewDesc(""); setNewContent(""); setNewVideoUrl(""); 
+    setFile(null); setNewRole("Todos"); setNewEmpresa("Todas");
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Tem certeza que deseja excluir este manual?")) return;
+    if (!confirm("Tem certeza que deseja excluir esta instrução?")) return;
     const { error } = await supabase.from("work_instructions").delete().eq("id", id);
     if (!error) {
       setInstructions(instructions.filter(it => it.id !== id));
-      toast.success("Excluído com sucesso.");
+      toast.success("Excluída com sucesso.");
     }
   }
 
-  // Filtrar instruções para mostrar apenas as relevantes para o usuário (se não for admin)
   const visibleInstructions = isAdmin 
     ? instructions 
     : instructions.filter(it => it.target_role === "Todos" || it.target_role === userRole);
@@ -137,7 +147,7 @@ export default function WorkInstructionsPage() {
         </div>
         {isAdmin && (
           <button onClick={() => setShowModal(true)} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90">
-            <Plus className="h-4 w-4" /> Novo Manual
+            <Plus className="h-4 w-4" /> Nova Instrução
           </button>
         )}
       </div>
@@ -149,8 +159,8 @@ export default function WorkInstructionsPage() {
           </div>
         ) : (
           visibleInstructions.map((it) => (
-            <div key={it.id} className="flex flex-col justify-between rounded-xl border bg-white p-5 shadow-sm">
-              <div>
+            <div key={it.id} className="flex flex-col rounded-xl border bg-white shadow-sm overflow-hidden">
+              <div className="p-5 flex-1">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
                     <BookOpen className="h-5 w-5" />
@@ -162,7 +172,8 @@ export default function WorkInstructionsPage() {
                   )}
                 </div>
                 <h3 className="mt-3 font-semibold text-slate-900">{it.title}</h3>
-                <p className="mt-1 text-sm text-slate-500 line-clamp-2">{it.description}</p>
+                {it.description && <p className="mt-1 text-sm text-slate-500 line-clamp-2">{it.description}</p>}
+                
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
                     {it.target_role}
@@ -175,23 +186,54 @@ export default function WorkInstructionsPage() {
                 </div>
               </div>
               
-              <a
-                href={it.file_url || "#"}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-5 flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-primary transition-colors"
-              >
-                <FileText className="h-4 w-4" /> Abrir Documento
-              </a>
+              <div className="border-t bg-slate-50">
+                {it.content && (
+                  <button 
+                    onClick={() => setExpandedId(expandedId === it.id ? null : it.id)}
+                    className="flex w-full items-center justify-between px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    Ler Passo a Passo
+                    {expandedId === it.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </button>
+                )}
+                
+                {expandedId === it.id && it.content && (
+                  <div className="px-5 pb-4 text-sm text-slate-600 whitespace-pre-wrap border-t border-slate-100 pt-3">
+                    {it.content}
+                  </div>
+                )}
+
+                <div className="flex divide-x border-t">
+                  {it.video_url && (
+                    <a
+                      href={it.video_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex flex-1 items-center justify-center gap-2 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-primary transition-colors"
+                    >
+                      <PlayCircle className="h-4 w-4" /> Vídeo
+                    </a>
+                  )}
+                  {it.file_url && (
+                    <a
+                      href={it.file_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex flex-1 items-center justify-center gap-2 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-primary transition-colors"
+                    >
+                      <FileText className="h-4 w-4" /> Anexo
+                    </a>
+                  )}
+                </div>
+              </div>
             </div>
           ))
         )}
       </div>
 
-      {/* Modal de Criação */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl my-8">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold">Nova Instrução</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
@@ -200,12 +242,23 @@ export default function WorkInstructionsPage() {
             <form onSubmit={handleSave} className="space-y-4">
               <label className="block">
                 <span className="mb-1 block text-sm font-medium text-slate-700">Título *</span>
-                <input required value={newTitle} onChange={e => setNewTitle(e.target.value)} className="w-full rounded-lg border p-2 text-sm outline-none focus:border-primary" />
+                <input required value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Ex: Abertura de comanda CPLUG" className="w-full rounded-lg border p-2 text-sm outline-none focus:border-primary" />
               </label>
               
               <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-700">Descrição</span>
-                <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} rows={2} className="w-full rounded-lg border p-2 text-sm outline-none focus:border-primary" />
+                <span className="mb-1 block text-sm font-medium text-slate-700">Resumo / Descrição Curta</span>
+                <input value={newDesc} onChange={e => setNewDesc(e.target.value)} className="w-full rounded-lg border p-2 text-sm outline-none focus:border-primary" />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-slate-700">Passo a Passo Escrito</span>
+                <textarea 
+                  value={newContent} 
+                  onChange={e => setNewContent(e.target.value)} 
+                  rows={5} 
+                  placeholder="1. Ligue o sistema...&#10;2. Insira a senha...&#10;3. Clique em..."
+                  className="w-full rounded-lg border p-2 text-sm outline-none focus:border-primary" 
+                />
               </label>
 
               <div className="grid grid-cols-2 gap-3">
@@ -223,10 +276,18 @@ export default function WorkInstructionsPage() {
                 </label>
               </div>
 
-              <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-700">Ficheiro (PDF) *</span>
-                <input type="file" accept=".pdf,image/*" onChange={e => setFile(e.target.files?.[0] || null)} required className="w-full text-sm text-slate-500 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium" />
-              </label>
+              <div className="space-y-3 rounded-lg border bg-slate-50 p-4">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Complementos (Opcionais)</p>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Link de Vídeo (YouTube, Drive, etc)</span>
+                  <input type="text" value={newVideoUrl} onChange={e => setNewVideoUrl(e.target.value)} placeholder="https://..." className="w-full rounded-lg border p-2 text-sm outline-none focus:border-primary" />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Arquivo / Imagem de Apoio</span>
+                  <input type="file" accept=".pdf,image/*" onChange={e => setFile(e.target.files?.[0] || null)} className="w-full text-sm text-slate-500 file:mr-3 file:rounded-md file:border-0 file:bg-slate-200 file:px-3 file:py-1.5 file:text-xs file:font-medium" />
+                </label>
+              </div>
 
               <div className="mt-6 flex justify-end gap-2">
                 <button type="button" onClick={() => setShowModal(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">Cancelar</button>
