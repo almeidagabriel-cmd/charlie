@@ -25,6 +25,7 @@ import {
   Users,
   X,
   Zap,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -80,6 +81,14 @@ interface Subtask {
 interface FormSubtask {
   title: string;
   assigned_to: string | null;
+}
+
+interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  read: boolean;
+  created_at: string;
 }
 
 const DAYS_OF_WEEK = [
@@ -185,6 +194,9 @@ export default function ChecklistPage() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
   
   const [startDate, setStartDate] = useState(todayLocal());
   const [endDate, setEndDate] = useState(todayLocal());
@@ -233,6 +245,12 @@ export default function ChecklistPage() {
   useEffect(() => {
     fetchInitialData();
   }, []);
+
+  useEffect(() => {
+    if (currentUser) {
+      fetchNotifications();
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     fetchLogs();
@@ -287,6 +305,25 @@ export default function ChecklistPage() {
 
     await fetchLogs();
     setLoading(false);
+  }
+
+  async function fetchNotifications() {
+    if (!currentUser) return;
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", currentUser)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (!error && data) {
+      setNotifications(data);
+    }
+  }
+
+  async function markNotificationAsRead(id: string) {
+    await supabase.from("notifications").update({ read: true }).eq("id", id);
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   }
 
   async function fetchSubtasks(templateIds: string[]) {
@@ -386,7 +423,6 @@ export default function ChecklistPage() {
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
       setNewSubtaskAssignedTo((prev) => ({ ...prev, [templateId]: "" }));
 
-      // Envia notificação se foi atribuído a alguém específico
       if (assigned && assigned !== currentUser) {
         const senderName = currentUserProfile?.full_name || "Alguém";
         await supabase.from("notifications").insert({
@@ -394,9 +430,10 @@ export default function ChecklistPage() {
           title: "Nova subtarefa atribuída",
           message: `${senderName} marcou-o na subtarefa: "${text}"`,
         });
+        fetchNotifications();
       }
 
-      toast.success("Subtarefa adicionada e notificação enviada!");
+      toast.success("Subtarefa adicionada!");
     }
   }
 
@@ -695,7 +732,11 @@ export default function ChecklistPage() {
 
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
-      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to;
+      const itemSubs = subtasks[t.id] || [];
+      const hasSubtaskAssignedToUser = filterUser !== "all" && itemSubs.some(s => s.assigned_to === filterUser);
+
+      // Agora a tarefa aparece se for do utilizador, da equipe, ou se tiver subtarefa atribuída a ele
+      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to || hasSubtaskAssignedToUser;
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
       const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
 
@@ -706,7 +747,7 @@ export default function ChecklistPage() {
 
       return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa;
     });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks]);
 
   const isDone = (t: Template) => {
     const l = logs[t.id];
@@ -768,6 +809,7 @@ export default function ChecklistPage() {
   ];
 
   const isTodaySelected = startDate === todayLocal() && endDate === todayLocal();
+  const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -778,6 +820,54 @@ export default function ChecklistPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           
+          {/* Sino de Notificações */}
+          <div className="relative">
+            <button
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="relative flex items-center justify-center rounded-lg border bg-white p-2.5 text-slate-600 hover:bg-slate-50"
+              title="Notificações"
+            >
+              <Bell className="h-4 w-4" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                  {unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+
+            {showNotifications && (
+              <div className="absolute right-0 mt-2 w-80 rounded-xl border bg-white p-3 shadow-xl z-50">
+                <div className="flex items-center justify-between border-b pb-2 mb-2">
+                  <span className="font-semibold text-sm text-slate-800">Notificações</span>
+                  <button onClick={() => setShowNotifications(false)} className="text-slate-400 hover:text-slate-700">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                {notifications.length === 0 ? (
+                  <p className="py-4 text-center text-xs text-slate-400">Nenhuma notificação</p>
+                ) : (
+                  <ul className="max-h-60 overflow-y-auto space-y-2">
+                    {notifications.map((n) => (
+                      <li
+                        key={n.id}
+                        onClick={() => markNotificationAsRead(n.id)}
+                        className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors ${
+                          n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium"
+                        }`}
+                      >
+                        <p className="font-semibold">{n.title}</p>
+                        <p className="mt-0.5">{n.message}</p>
+                        <span className="mt-1 block text-[10px] text-slate-400">
+                          {new Date(n.created_at).toLocaleString("pt-BR")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Filtro por Empresa */}
           <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
             <Building2 className="h-4 w-4 text-slate-500" />
@@ -1421,9 +1511,11 @@ export default function ChecklistPage() {
               <input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} />
             </Field>
             
-            <Field label="Descrição">
-              <textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} />
-            </Field>
+            <div className="space-y-2">
+              <Field label="Descrição">
+                <textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} />
+              </Field>
+            </div>
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria">
@@ -1476,7 +1568,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return (
     <label className="block space-y-1.5">
       <span className="text-sm font-medium text-slate-700">{label}</span>
-      {children}
     </label>
   );
 }
