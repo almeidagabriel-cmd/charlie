@@ -31,6 +31,8 @@ import {
   ArrowUpRight,
   Send,
   ListTodo,
+  ThumbsUp,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -63,6 +65,8 @@ interface Template {
   input_label: string | null;
   requires_photo: boolean;
   is_one_time: boolean;
+  due_date?: string | null;
+  accepted?: boolean;
   created_at?: string;
 }
 
@@ -260,6 +264,7 @@ function todayLocal() {
 }
 
 function parseLocalDate(value: string) {
+  if (!value) return new Date();
   const [y, m, d] = value.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
@@ -330,12 +335,14 @@ export default function ChecklistPage() {
   const [uploading, setUploading] = useState(false);
 
   const [showOneTimeModal, setShowOneTimeModal] = useState(false);
+  const [editingOneTimeId, setEditingOneTimeId] = useState<string | null>(null);
   const [oneTimeTitle, setOneTimeTitle] = useState("");
   const [oneTimeDesc, setOneTimeDesc] = useState("");
   const [oneTimeCategory, setOneTimeCategory] = useState("Geral");
   const [oneTimeAssignedTo, setOneTimeAssignedTo] = useState("");
   const [oneTimeEmpresa, setOneTimeEmpresa] = useState("");
   const [oneTimeSetor, setOneTimeSetor] = useState("Geral / Todos");
+  const [oneTimeDueDate, setOneTimeDueDate] = useState("");
   const [oneTimeFormSubtasks, setOneTimeFormSubtasks] = useState<FormSubtask[]>([]);
   const [oneTimeSubInput, setOneTimeSubInput] = useState("");
 
@@ -538,7 +545,31 @@ export default function ChecklistPage() {
     }));
   }
 
+  async function handleAcceptTask(template: Template) {
+    setTogglingId(template.id);
+    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true }).eq("id", template.id);
+    setTogglingId(null);
+    if (error) return void toast.error("Erro ao aceitar a tarefa.");
+    
+    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true } : t));
+    toast.success("Tarefa aceita com sucesso!");
+    
+    if (template.created_by && template.created_by !== currentUser) {
+      const senderName = currentUserProfile?.full_name || "Alguém";
+      await supabase.from("notifications").insert({
+        user_id: template.created_by,
+        title: "Tarefa Aceita",
+        message: `${senderName} aceitou e iniciou a tarefa: "${template.title}"`,
+      });
+      fetchNotifications();
+    }
+  }
+
   async function handleCheckClick(template: Template) {
+    if (template.is_one_time && template.assigned_to && !template.accepted && template.assigned_to === currentUser) {
+      return toast.info("Você precisa aceitar a tarefa antes de marcá-la como concluída.");
+    }
+
     const currentLog = logs[template.id];
     const isCompleted = !!currentLog?.completed;
     if (isCompleted) {
@@ -592,19 +623,64 @@ export default function ChecklistPage() {
     await submitCompletion(completingTemplate.id, completingTemplate.assigned_to, inputValue || null, photoUrl);
   }
 
-  async function handleCreateOneTimeTask(e: React.FormEvent) {
+  function handleOpenNewOneTimeTask() {
+    setEditingOneTimeId(null);
+    setOneTimeTitle("");
+    setOneTimeDesc("");
+    setOneTimeCategory("Geral");
+    setOneTimeAssignedTo("");
+    setOneTimeEmpresa("");
+    setOneTimeSetor("Geral / Todos");
+    setOneTimeDueDate("");
+    setOneTimeFormSubtasks([]);
+    setShowOneTimeModal(true);
+  }
+
+  function handleEditOneTimeTask(template: Template) {
+    setEditingOneTimeId(template.id);
+    setOneTimeTitle(template.title);
+    setOneTimeDesc(template.description || "");
+    setOneTimeCategory(template.category || "Geral");
+    setOneTimeAssignedTo(template.assigned_to || "");
+    setOneTimeEmpresa(template.empresa || "Todas / Grupo B&A");
+    setOneTimeSetor(template.setor || "Geral / Todos");
+    setOneTimeDueDate(template.due_date ? template.due_date.split("T")[0] : "");
+    
+    const currentSubs = subtasks[template.id] || [];
+    setOneTimeFormSubtasks(currentSubs.map(s => ({ title: s.title, assigned_to: s.assigned_to || null })));
+    setShowOneTimeModal(true);
+  }
+
+  async function handleSaveOneTimeTask(e: React.FormEvent) {
     e.preventDefault();
     if (!oneTimeTitle.trim()) return;
 
     const targetUser = isColaborador ? currentUser : oneTimeAssignedTo || null;
-    const { data, error } = await supabase.from("daily_checklist_templates").insert({
-      title: oneTimeTitle, description: oneTimeDesc, category: oneTimeCategory, empresa: oneTimeEmpresa || "Todas / Grupo B&A",
-      setor: oneTimeSetor || "Geral / Todos", assigned_to: targetUser, created_by: currentUser, recurrence_type: "daily", is_one_time: true,
-    }).select().single();
+    const payload = {
+      title: oneTimeTitle, 
+      description: oneTimeDesc, 
+      category: oneTimeCategory, 
+      empresa: oneTimeEmpresa || "Todas / Grupo B&A",
+      setor: oneTimeSetor || "Geral / Todos", 
+      assigned_to: targetUser, 
+      due_date: oneTimeDueDate || null,
+      recurrence_type: "daily" as RecurrenceType, 
+      is_one_time: true,
+      accepted: targetUser === currentUser || !targetUser ? true : false
+    };
 
-    if (error) return void toast.error("Não foi possível criar a tarefa");
+    let result;
+    if (editingOneTimeId) {
+       result = await supabase.from("daily_checklist_templates").update(payload).eq("id", editingOneTimeId).select().single();
+    } else {
+       result = await supabase.from("daily_checklist_templates").insert({ ...payload, created_by: currentUser }).select().single();
+    }
+
+    if (result.error) return void toast.error("Não foi possível salvar a tarefa");
+    const data = result.data as Template;
+    
     if (data) {
-      if (oneTimeFormSubtasks.length > 0) {
+      if (oneTimeFormSubtasks.length > 0 && !editingOneTimeId) {
         const subtaskInserts = oneTimeFormSubtasks.map((st) => ({ checklist_item_id: data.id, title: st.title, assigned_to: st.assigned_to, completed: false }));
         const { data: insertedSubs } = await supabase.from("checklist_subtasks").insert(subtaskInserts).select();
         if (insertedSubs) {
@@ -617,10 +693,21 @@ export default function ChecklistPage() {
         }
         fetchSubtasks([data.id]);
       }
-      setTemplates((prev) => [...prev, data]);
-      setOneTimeTitle(""); setOneTimeDesc(""); setOneTimeCategory("Geral"); setOneTimeAssignedTo(""); setOneTimeFormSubtasks([]); setShowOneTimeModal(false);
-      setActiveTab("tasks"); // Redireciona automaticamente para a aba de tarefas
-      toast.success("Tarefa enviada com sucesso!");
+      
+      if (editingOneTimeId) {
+        setTemplates((prev) => prev.map(t => t.id === editingOneTimeId ? data : t));
+        toast.success("Tarefa atualizada!");
+      } else {
+        setTemplates((prev) => [...prev, data]);
+        toast.success("Tarefa criada com sucesso!");
+        if (targetUser && targetUser !== currentUser) {
+          const senderName = currentUserProfile?.full_name || "Alguém";
+          await supabase.from("notifications").insert({ user_id: targetUser, title: "Nova Tarefa Recebida", message: `${senderName} enviou uma tarefa: "${data.title}"` });
+        }
+      }
+      
+      setShowOneTimeModal(false);
+      setActiveTab("tasks");
     }
   }
 
@@ -692,8 +779,12 @@ export default function ChecklistPage() {
 
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
+      if (t.is_one_time) {
+        if (oneTimeDoneBefore.has(t.id)) return false;
+        return true;
+      }
+      
       if (t.created_at && toLocalDateString(t.created_at) > endDate) return false;
-      if (t.is_one_time) return !oneTimeDoneBefore.has(t.id);
       let curr = new Date(parseLocalDate(startDate));
       const end = parseLocalDate(endDate);
       while (curr <= end) {
@@ -706,7 +797,6 @@ export default function ChecklistPage() {
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
-  // VISIBLE TASKS (Aplica os filtros globais de usuário, empresa, setor e esconder concluídas)
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
@@ -722,11 +812,9 @@ export default function ChecklistPage() {
     });
   }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, hideCompleted, logs]);
 
-  // SEPARAÇÃO: Rotinas vs Tarefas
   const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
   const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
 
-  // Define qual lista será renderizada com base na aba ativa
   const currentTabTasks = activeTab === "daily" ? routineTasks : activeTab === "tasks" ? oneOffTasks : [];
 
   const grouped = useMemo(() => {
@@ -738,7 +826,6 @@ export default function ChecklistPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [currentTabTasks]);
 
-  // Cálculos de progresso focados apenas na aba atual (Rotinas ou Tarefas)
   const doneCount = currentTabTasks.filter(isDone).length;
   const totalCount = currentTabTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
@@ -771,6 +858,7 @@ export default function ChecklistPage() {
   ];
 
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
+  const todayStr = todayLocal();
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -784,7 +872,7 @@ export default function ChecklistPage() {
             {activeTab === "daily" 
               ? "Acompanhe e valide as rotinas operacionais recorrentes." 
               : activeTab === "tasks" 
-                ? "Gestão de tarefas pontuais, pedidos e aprovações." 
+                ? "Gestão de tarefas pontuais, pedidos e aprovações com prazos." 
                 : "Gestão operacional e acompanhamento de equipe."}
           </p>
         </div>
@@ -857,7 +945,7 @@ export default function ChecklistPage() {
             </label>
           )}
 
-          <button onClick={() => setShowOneTimeModal(true)} className="flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600">
+          <button onClick={handleOpenNewOneTimeTask} className="flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600">
             <Zap className="h-4 w-4" /> Nova Tarefa
           </button>
         </div>
@@ -874,7 +962,7 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Renderização da Lista (Serve para a aba de Rotinas ou de Tarefas) */}
+      {/* Renderização da Lista */}
       {(activeTab === "daily" || activeTab === "tasks") && (
         <div className="space-y-5">
           <div className="rounded-xl border bg-white p-4">
@@ -910,8 +998,12 @@ export default function ChecklistPage() {
                     const isExpanded = !!expandedItems[t.id];
                     const completedSubs = itemSubtasks.filter((s) => s.completed).length;
 
+                    const requiresAcceptance = t.is_one_time && t.assigned_to && !t.accepted;
+                    const canAccept = requiresAcceptance && t.assigned_to === currentUser;
+                    const isOverdue = t.due_date && t.due_date < todayStr && !done;
+
                     return (
-                      <li key={t.id} className="flex flex-col px-4 py-3">
+                      <li key={t.id} className={`flex flex-col px-4 py-4 ${requiresAcceptance ? "bg-amber-50/30" : ""}`}>
                         <div className="flex items-start gap-3">
                           <button onClick={() => handleCheckClick(t)} disabled={togglingId === t.id} className="mt-0.5 shrink-0 disabled:opacity-50">
                             {togglingId === t.id ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : done ? <CheckCircle2 className="h-6 w-6 text-emerald-500" /> : <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />}
@@ -919,21 +1011,54 @@ export default function ChecklistPage() {
                           
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
-                              <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>{t.title}</p>
-                              <button onClick={() => setExpandedItems((prev) => ({ ...prev, [t.id]: !prev[t.id] }))} className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 bg-slate-50 px-2 py-1 rounded">
-                                {itemSubtasks.length > 0 && <span>{completedSubs}/{itemSubtasks.length} itens</span>}
-                                {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                              </button>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>{t.title}</p>
+                                
+                                {t.due_date && (
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${done ? "bg-slate-100 text-slate-500 border-slate-200" : isOverdue ? "bg-red-50 text-red-600 border-red-200" : t.due_date === todayStr ? "bg-amber-50 text-amber-600 border-amber-200" : "bg-blue-50 text-blue-600 border-blue-200"}`}>
+                                    <Clock className="h-3 w-3" /> 
+                                    Prazo: {new Date(t.due_date + "T00:00:00").toLocaleDateString('pt-BR')}
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-center gap-2">
+                                {t.is_one_time && (t.created_by === currentUser || !isColaborador) && !done && (
+                                  <button onClick={() => handleEditOneTimeTask(t)} className="text-slate-400 hover:text-slate-700 bg-slate-50 px-2 py-1 rounded" title="Editar Tarefa">
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+                                )}
+
+                                <button onClick={() => setExpandedItems((prev) => ({ ...prev, [t.id]: !prev[t.id] }))} className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 bg-slate-50 px-2 py-1 rounded">
+                                  {itemSubtasks.length > 0 && <span>{completedSubs}/{itemSubtasks.length} itens</span>}
+                                  {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                </button>
+                              </div>
                             </div>
 
-                            {t.description && <p className="mt-0.5 text-sm text-slate-500">{t.description}</p>}
+                            {t.description && <p className="mt-1 text-sm text-slate-500">{t.description}</p>}
                             
-                            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                               <span className="flex items-center gap-1 text-primary/80 font-medium"><Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas"}</span>
                               {t.setor && <span className="flex items-center gap-1 text-indigo-600 font-medium"><Briefcase className="h-3.5 w-3.5" /> {t.setor}</span>}
                               <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}</span>
                               {t.created_by && <span className="flex items-center gap-1 text-amber-700 font-medium"><ArrowUpRight className="h-3.5 w-3.5" /> Enviado por: {userName(t.created_by)}</span>}
                             </div>
+
+                            {requiresAcceptance && !done && (
+                              <div className="mt-3 flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                                <div className="text-xs text-amber-800">
+                                  <span className="font-semibold block mb-0.5">Tarefa aguardando aceite</span>
+                                  Para iniciar e conseguir concluir os passos, o responsável precisa aceitar a tarefa.
+                                </div>
+                                {canAccept && (
+                                  <button onClick={() => handleAcceptTask(t)} disabled={togglingId === t.id} className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors">
+                                    {togglingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
+                                    Aceitar Tarefa
+                                  </button>
+                                )}
+                              </div>
+                            )}
 
                             {isExpanded && (
                               <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
@@ -947,10 +1072,16 @@ export default function ChecklistPage() {
                                       const commentsList = sub.comments || [];
                                       return (
                                         <li key={sub.id} className="rounded-lg bg-white p-3 border border-slate-200 shadow-sm">
-                                          {/* Cabeçalho da Subtarefa */}
                                           <div className="flex items-start justify-between gap-2">
                                             <label className="flex items-start gap-2 cursor-pointer select-none flex-1">
-                                              <input type="checkbox" checked={sub.completed} onChange={() => handleToggleSubtask(sub)} className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary mt-0.5 shrink-0" />
+                                              {/* CORREÇÃO AQUI: Uso de dupla negação (!!) para garantir booleano */}
+                                              <input 
+                                                type="checkbox" 
+                                                disabled={!!(requiresAcceptance && !canAccept)} 
+                                                checked={sub.completed} 
+                                                onChange={() => { if(requiresAcceptance && !canAccept) { toast.info("Responsável precisa aceitar a tarefa primeiro."); return; } handleToggleSubtask(sub); }} 
+                                                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary mt-0.5 shrink-0 disabled:opacity-50" 
+                                              />
                                               <span className={`break-words text-sm font-semibold ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
                                                 {sub.title}
                                                 {sub.assigned_to && (
@@ -963,7 +1094,6 @@ export default function ChecklistPage() {
                                             <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
                                           </div>
 
-                                          {/* Thread de Comentários */}
                                           <div className="mt-3 ml-6 pl-3 border-l-2 border-slate-100 space-y-3">
                                             {commentsList.length > 0 && (
                                               <div className="space-y-2">
@@ -978,7 +1108,6 @@ export default function ChecklistPage() {
                                                       </span>
                                                     </div>
                                                     
-                                                    {/* Renderização da menção em azul */}
                                                     <p className="text-slate-700 whitespace-pre-wrap pl-4">
                                                       {(() => {
                                                         const names = users.map(u => u.full_name || u.email).filter(Boolean);
@@ -997,13 +1126,11 @@ export default function ChecklistPage() {
                                                         );
                                                       })()}
                                                     </p>
-
                                                   </div>
                                                 ))}
                                               </div>
                                             )}
 
-                                            {/* Input Inteligente para Resposta */}
                                             <MentionInput
                                               value={commentInputs[sub.id] || ""}
                                               onChange={(val) => setCommentInputs(prev => ({ ...prev, [sub.id]: val }))}
@@ -1019,7 +1146,6 @@ export default function ChecklistPage() {
                                   </ul>
                                 )}
 
-                                {/* Input Inteligente para nova Subtarefa/Passo */}
                                 <div className="mt-4 pt-4 border-t border-slate-200">
                                   <MentionInput
                                     value={newSubtaskTexts[t.id] || ""}
@@ -1168,10 +1294,10 @@ export default function ChecklistPage() {
         </Modal>
       )}
 
-      {/* Modal Nova Tarefa */}
+      {/* Modal Nova Tarefa Extra (ou Edição) */}
       {showOneTimeModal && (
-        <Modal title="Nova Tarefa / Pedido de Aprovação" onClose={() => setShowOneTimeModal(false)}>
-          <form onSubmit={handleCreateOneTimeTask} className="space-y-4">
+        <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => setShowOneTimeModal(false)}>
+          <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
               <Field label="Setor / Depto"><select value={oneTimeSetor} onChange={(e) => setOneTimeSetor(e.target.value)} className={inputCls}>{SETORES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
@@ -1181,8 +1307,12 @@ export default function ChecklistPage() {
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-              {!isColaborador && <Field label="Responsável"><select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}><option value="">Equipe</option>{users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>}
+              {!isColaborador && <Field label="Responsável"><select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}><option value="">Equipe (Sem dono)</option>{users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>}
             </div>
+
+            <Field label="Prazo (Data de Execução)">
+               <input type="date" value={oneTimeDueDate} onChange={(e) => setOneTimeDueDate(e.target.value)} className={inputCls} />
+            </Field>
 
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
               <span className="text-sm font-medium text-slate-700">Perguntas ou Passos</span>
@@ -1194,26 +1324,34 @@ export default function ChecklistPage() {
                         <span className="truncate">{st.title}</span>
                         {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
                       </div>
-                      <button type="button" onClick={() => setOneTimeFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
+                      {!editingOneTimeId && (
+                        <button type="button" onClick={() => setOneTimeFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
+                      )}
                     </li>
                   ))}
                 </ul>
               )}
-              <MentionInput
-                 value={oneTimeSubInput}
-                 onChange={setOneTimeSubInput}
-                 onSubmit={(text, assignedToId) => {
-                   setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
-                   setOneTimeSubInput("");
-                 }}
-                 users={users}
-                 placeholder="Escreva e use @ para direcionar..."
-              />
+              {!editingOneTimeId && (
+                <MentionInput
+                   value={oneTimeSubInput}
+                   onChange={setOneTimeSubInput}
+                   onSubmit={(text, assignedToId) => {
+                     setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
+                     setOneTimeSubInput("");
+                   }}
+                   users={users}
+                   placeholder="Escreva e use @ para direcionar..."
+                />
+              )}
+              {editingOneTimeId && <p className="text-xs text-slate-500 italic">Adicione passos diretamente na lista de tarefas.</p>}
             </div>
             
             <div className="flex justify-end gap-2 mt-2">
               <button type="button" onClick={() => setShowOneTimeModal(false)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-              <button type="submit" className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600"><Zap className="h-4 w-4" /> Criar tarefa</button>
+              <button type="submit" className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600">
+                {editingOneTimeId ? <Pencil className="h-4 w-4" /> : <Zap className="h-4 w-4" />} 
+                {editingOneTimeId ? "Salvar Tarefa" : "Criar tarefa"}
+              </button>
             </div>
           </form>
         </Modal>
