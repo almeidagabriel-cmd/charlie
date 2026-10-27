@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  BookOpen, // <-- Ícone novo adicionado aqui
   CheckSquare,
   KanbanSquare,
   LayoutDashboard,
@@ -29,12 +30,16 @@ export function Sidebar({ profile }: { profile: Profile }) {
   const rawRole = profile?.role ?? "member";
   const isColaborador = rawRole === "member";
 
-  // Itens do menu baseados no cargo do usuário
+  // Itens do menu baseados no cargo do usuário atualizados com a aba IT
   const items = isColaborador
-    ? [{ href: "/checklist", label: "Checklist Diário", icon: CheckSquare }]
+    ? [
+        { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
+        { href: "/it", label: "Instrução de Trabalho", icon: BookOpen } // <-- Adicionado para Colaboradores
+      ]
     : [
         { href: "/checklist", label: "Checklist Diário", icon: CheckSquare },
         { href: "/planejamento", label: "Planejamento", icon: KanbanSquare },
+        { href: "/it", label: "Instrução de Trabalho", icon: BookOpen }, // <-- Adicionado para Gestores/Admins
         ...(rawRole === "admin" ? [{ href: "/usuarios", label: "Usuários", icon: Users }] : []),
       ];
 
