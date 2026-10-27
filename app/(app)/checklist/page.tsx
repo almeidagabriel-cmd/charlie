@@ -204,7 +204,6 @@ export default function ChecklistPage() {
   const [newSubtaskTexts, setNewSubtaskTexts] = useState<Record<string, string>>({});
   const [newSubtaskAssignedTo, setNewSubtaskAssignedTo] = useState<Record<string, string>>({});
   
-  // Estados para gerenciar comentários nas subtarefas
   const [expandedSubtaskComments, setExpandedSubtaskComments] = useState<Record<string, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
@@ -359,7 +358,6 @@ export default function ChecklistPage() {
     if (!error && data) {
       const subtaskIds = data.map((s: Subtask) => s.id);
       
-      // Busca também os comentários destas subtarefas
       let commentsMap: Record<string, SubtaskComment[]> = {};
       if (subtaskIds.length > 0) {
         const { data: commentsData } = await supabase
@@ -466,7 +464,6 @@ export default function ChecklistPage() {
       }));
       setCommentInputs((prev) => ({ ...prev, [subtask.id]: "" }));
 
-      // Notifica o responsável da subtarefa ou o criador se necessário
       if (subtask.assigned_to && subtask.assigned_to !== currentUser) {
         const senderName = currentUserProfile?.full_name || "Alguém";
         await supabase.from("notifications").insert({
@@ -1280,20 +1277,22 @@ export default function ChecklistPage() {
                                             </div>
                                           </div>
 
-                                          {/* Seção de Comentários */}
+                                          {/* Seção de Comentários (Sem caixa de seleção, formato balão de chat limpo) */}
                                           {showComments && (
-                                            <div className="mt-3 border-t pt-2.5 space-y-2">
+                                            <div className="mt-3 border-t pt-2.5 space-y-2.5">
                                               {commentsList.length > 0 && (
-                                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                                                   {commentsList.map((c) => (
-                                                    <div key={c.id} className="rounded bg-slate-50 p-2 text-xs">
-                                                      <div className="flex items-center justify-between font-semibold text-slate-700 mb-0.5">
-                                                        <span>{userName(c.user_id)}</span>
+                                                    <div key={c.id} className="rounded-lg bg-slate-50 p-2.5 border text-xs shadow-xs">
+                                                      <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                                                        <span className="flex items-center gap-1 text-primary">
+                                                          <UserIcon className="h-3 w-3" /> {userName(c.user_id)}
+                                                        </span>
                                                         <span className="text-[10px] text-slate-400 font-normal">
                                                           {new Date(c.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
                                                         </span>
                                                       </div>
-                                                      <p className="text-slate-600 whitespace-pre-wrap">{c.comment}</p>
+                                                      <p className="text-slate-700 whitespace-pre-wrap pl-4">{c.comment}</p>
                                                     </div>
                                                   ))}
                                                 </div>
@@ -1305,11 +1304,11 @@ export default function ChecklistPage() {
                                                   placeholder="Escreva um comentário ou resposta..."
                                                   value={commentInputs[sub.id] || ""}
                                                   onChange={(e) => setCommentInputs(prev => ({ ...prev, [sub.id]: e.target.value }))}
-                                                  className="flex-1 rounded border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+                                                  className="flex-1 rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-primary"
                                                 />
                                                 <button
                                                   type="submit"
-                                                  className="flex items-center justify-center rounded bg-primary px-2.5 py-1.5 text-white hover:bg-primary/90"
+                                                  className="flex items-center justify-center rounded bg-primary px-3 py-1.5 text-white hover:bg-primary/90"
                                                   title="Enviar comentário"
                                                 >
                                                   <Send className="h-3.5 w-3.5" />
