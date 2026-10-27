@@ -194,7 +194,7 @@ export default function ChecklistPage() {
   const [showOneTimeModal, setShowOneTimeModal] = useState(false);
   const [oneTimeTitle, setOneTimeTitle] = useState("");
   const [oneTimeDesc, setOneTimeDesc] = useState("");
-  const [oneTimeCategory, setOneTimeCategory] = useState("Urgente");
+  const [oneTimeCategory, setOneTimeCategory] = useState("Geral"); // Alterado para Geral
   const [oneTimeAssignedTo, setOneTimeAssignedTo] = useState("");
   const [oneTimeEmpresa, setOneTimeEmpresa] = useState("");
   const [oneTimeSetor, setOneTimeSetor] = useState("Geral / Todos");
@@ -521,6 +521,7 @@ export default function ChecklistPage() {
       setTemplates((prev) => [...prev, data]);
       setOneTimeTitle("");
       setOneTimeDesc("");
+      setOneTimeCategory("Geral");
       setOneTimeAssignedTo("");
       setShowOneTimeModal(false);
       toast.success("Tarefa extra criada.");
@@ -1125,10 +1126,11 @@ export default function ChecklistPage() {
             
             <div className="grid grid-cols-2 gap-3">
               <Field label="Categoria">
-                <input list="checklist-categories" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls} />
-                <datalist id="checklist-categories">
-                  {CATEGORIES.map((c) => <option key={c} value={c} />)}
-                </datalist>
+                <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
               </Field>
               <Field label="Responsável">
                 <select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}>
@@ -1358,10 +1360,11 @@ export default function ChecklistPage() {
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria">
-                <input list="checklist-categories-extra" value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls} />
-                <datalist id="checklist-categories-extra">
-                  {CATEGORIES.map((c) => <option key={c} value={c} />)}
-                </datalist>
+                <select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
               </Field>
               {!isColaborador && (
                 <Field label="Responsável">
