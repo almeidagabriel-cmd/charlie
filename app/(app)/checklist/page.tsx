@@ -939,7 +939,7 @@ export default function ChecklistPage() {
                                             <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
                                           </div>
 
-                                          {/* Thread de Comentários Sempre Aberta! */}
+                                          {/* Thread de Comentários */}
                                           <div className="mt-3 ml-6 pl-3 border-l-2 border-slate-100 space-y-3">
                                             {commentsList.length > 0 && (
                                               <div className="space-y-2">
@@ -953,7 +953,27 @@ export default function ChecklistPage() {
                                                         {new Date(c.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
                                                       </span>
                                                     </div>
-                                                    <p className="text-slate-700 whitespace-pre-wrap pl-4.5">{c.comment}</p>
+                                                    
+                                                    {/* Renderização da menção em azul */}
+                                                    <p className="text-slate-700 whitespace-pre-wrap pl-4">
+                                                      {(() => {
+                                                        const names = users.map(u => u.full_name || u.email).filter(Boolean);
+                                                        if (names.length === 0) return c.comment;
+                                                        
+                                                        const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
+                                                        
+                                                        return c.comment.split(regex).map((part, i) => 
+                                                          part.match(regex) ? (
+                                                            <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
+                                                              {part}
+                                                            </span>
+                                                          ) : (
+                                                            part
+                                                          )
+                                                        );
+                                                      })()}
+                                                    </p>
+
                                                   </div>
                                                 ))}
                                               </div>
@@ -1000,7 +1020,7 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Tabs Reports e Manage - Igual ao anterior */}
+      {/* Tabs Reports e Manage */}
       {activeTab === "reports" && !isColaborador && (
         <div className="space-y-4">
           {report.length === 0 ? (
