@@ -30,6 +30,7 @@ import {
   Eye,
   ArrowUpRight,
   Send,
+  ListTodo,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -285,7 +286,7 @@ function isDueOn(t: Template, dateStr: string) {
 }
 
 function recurrenceText(t: Template) {
-  if (t.is_one_time) return "Tarefa extra (única)";
+  if (t.is_one_time) return "Tarefa pontual";
   if (t.recurrence_type === "monthly") return `Mensal — dia ${t.recurrence_day ?? 1}`;
   if (t.recurrence_type === "custom") {
     const days = DAYS_OF_WEEK.filter((d) => (t.custom_days ?? []).includes(d.value)).map((d) => d.label);
@@ -297,7 +298,7 @@ function recurrenceText(t: Template) {
 // --- Página Principal ---
 export default function ChecklistPage() {
   const [supabase] = useState(() => createClient());
-  const [activeTab, setActiveTab] = useState<"daily" | "reports" | "manage">("daily");
+  const [activeTab, setActiveTab] = useState<"daily" | "tasks" | "reports" | "manage">("daily");
   const [templates, setTemplates] = useState<Template[]>([]);
   const [logs, setLogs] = useState<Record<string, Log>>({});
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({});
@@ -474,7 +475,7 @@ export default function ChecklistPage() {
       comment: text,
     }).select().single();
 
-    if (error) return void toast.error("Erro ao enviar comentário (verifique a base de dados)");
+    if (error) return void toast.error("Erro ao enviar comentário");
 
     if (data) {
       setSubtasks((prev) => ({
@@ -485,7 +486,6 @@ export default function ChecklistPage() {
       }));
       setCommentInputs((prev) => ({ ...prev, [subtask.id]: "" }));
 
-      // Se mencionou alguém ou se a subtarefa for de outra pessoa
       const targetUserId = assignedUserId || (subtask.assigned_to !== currentUser ? subtask.assigned_to : null);
       if (targetUserId) {
         const senderName = currentUserProfile?.full_name || "Alguém";
@@ -619,7 +619,8 @@ export default function ChecklistPage() {
       }
       setTemplates((prev) => [...prev, data]);
       setOneTimeTitle(""); setOneTimeDesc(""); setOneTimeCategory("Geral"); setOneTimeAssignedTo(""); setOneTimeFormSubtasks([]); setShowOneTimeModal(false);
-      toast.success("Tarefa extra enviada!");
+      setActiveTab("tasks"); // Redireciona automaticamente para a aba de tarefas
+      toast.success("Tarefa enviada com sucesso!");
     }
   }
 
@@ -680,7 +681,7 @@ export default function ChecklistPage() {
     await supabase.from("daily_checklist_templates").delete().eq("id", deletingTemplate.id);
     setTemplates((prev) => prev.filter((t) => t.id !== deletingTemplate.id));
     if (editingTemplateId === deletingTemplate.id) handleCancelEdit();
-    toast.success("Rotina excluída.");
+    toast.success("Excluído com sucesso.");
   }
 
   const userName = (id: string | null) => {
@@ -705,6 +706,7 @@ export default function ChecklistPage() {
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
+  // VISIBLE TASKS (Aplica os filtros globais de usuário, empresa, setor e esconder concluídas)
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
@@ -720,17 +722,25 @@ export default function ChecklistPage() {
     });
   }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, hideCompleted, logs]);
 
+  // SEPARAÇÃO: Rotinas vs Tarefas
+  const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
+  const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
+
+  // Define qual lista será renderizada com base na aba ativa
+  const currentTabTasks = activeTab === "daily" ? routineTasks : activeTab === "tasks" ? oneOffTasks : [];
+
   const grouped = useMemo(() => {
     const map = new Map<string, Template[]>();
-    visibleTasks.forEach((t) => {
-      const key = t.is_one_time ? "⚡ Tarefas extras" : t.category || "Geral";
+    currentTabTasks.forEach((t) => {
+      const key = t.category || "Geral";
       map.set(key, [...(map.get(key) ?? []), t]);
     });
-    return Array.from(map.entries()).sort(([a], [b]) => (a.startsWith("⚡") ? -1 : b.startsWith("⚡") ? 1 : a.localeCompare(b)));
-  }, [visibleTasks]);
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [currentTabTasks]);
 
-  const doneCount = dueInRange.filter(isDone).length;
-  const totalCount = dueInRange.length;
+  // Cálculos de progresso focados apenas na aba atual (Rotinas ou Tarefas)
+  const doneCount = currentTabTasks.filter(isDone).length;
+  const totalCount = currentTabTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
   const report = useMemo(() => {
@@ -755,7 +765,8 @@ export default function ChecklistPage() {
   if (loading) return <div className="flex h-[50vh] items-center justify-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div>;
 
   const tabs = [
-    { id: "daily" as const, label: "Checklist do Período", icon: CheckSquare },
+    { id: "daily" as const, label: "Rotinas Diárias", icon: CheckSquare },
+    { id: "tasks" as const, label: "Gerenciamento de Tarefas", icon: ListTodo },
     ...(!isColaborador ? [{ id: "reports" as const, label: "Acompanhamento", icon: Users }, { id: "manage" as const, label: "Gerenciar Rotinas", icon: Repeat }] : []),
   ];
 
@@ -763,11 +774,19 @@ export default function ChecklistPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      {/* Header e Filtros - inalterados */}
+      {/* Header e Filtros */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Checklist Diário</h1>
-          <p className="mt-1 text-sm text-slate-500">Rotinas operacionais, subtarefas e tarefas extras por empresa e setor.</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+            {activeTab === "daily" ? "Rotinas Diárias" : activeTab === "tasks" ? "Gerenciamento de Tarefas" : "Checklist e Tarefas"}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {activeTab === "daily" 
+              ? "Acompanhe e valide as rotinas operacionais recorrentes." 
+              : activeTab === "tasks" 
+                ? "Gestão de tarefas pontuais, pedidos e aprovações." 
+                : "Gestão operacional e acompanhamento de equipe."}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           
@@ -839,26 +858,28 @@ export default function ChecklistPage() {
           )}
 
           <button onClick={() => setShowOneTimeModal(true)} className="flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600">
-            <Zap className="h-4 w-4" /> Tarefa extra
+            <Zap className="h-4 w-4" /> Nova Tarefa
           </button>
         </div>
       </div>
 
+      {/* Tabs Menu */}
       {tabs.length > 1 && (
-        <div className="flex gap-1 rounded-lg border bg-white p-1">
+        <div className="flex gap-1 rounded-lg border bg-white p-1 overflow-x-auto">
           {tabs.map(({ id, label, icon: Icon }) => (
-            <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${activeTab === id ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"}`}>
-              <Icon className="h-4 w-4" /> <span className="hidden sm:inline">{label}</span>
+            <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === id ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"}`}>
+              <Icon className="h-4 w-4" /> <span>{label}</span>
             </button>
           ))}
         </div>
       )}
 
-      {activeTab === "daily" && (
+      {/* Renderização da Lista (Serve para a aba de Rotinas ou de Tarefas) */}
+      {(activeTab === "daily" || activeTab === "tasks") && (
         <div className="space-y-5">
           <div className="rounded-xl border bg-white p-4">
             <div className="mb-2 flex items-center justify-between text-sm">
-              <span className="font-medium text-slate-700">{doneCount} de {totalCount} concluídas no período</span>
+              <span className="font-medium text-slate-700">{doneCount} de {totalCount} concluídas {activeTab === "daily" ? "na rotina" : "nas tarefas"}</span>
               <span className={`font-semibold ${pct === 100 ? "text-emerald-600" : pct >= 50 ? "text-amber-600" : "text-red-600"}`}>{pct}%</span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
@@ -866,10 +887,13 @@ export default function ChecklistPage() {
             </div>
           </div>
 
-          {visibleTasks.length === 0 ? (
+          {currentTabTasks.length === 0 ? (
             <div className="flex flex-col items-center rounded-xl border border-dashed bg-white py-14 text-center">
               <FolderCheck className="mb-3 h-8 w-8 text-slate-400" />
-              <p className="font-medium text-slate-700">Nenhuma tarefa encontrada</p>
+              <p className="font-medium text-slate-700">Nenhum item encontrado</p>
+              <p className="text-sm text-slate-500 mt-1">
+                {activeTab === "tasks" ? "Nenhuma tarefa criada ou visível nos filtros." : "Nenhuma rotina diária para exibir."}
+              </p>
             </div>
           ) : (
             grouped.map(([category, items]) => (
@@ -1025,7 +1049,7 @@ export default function ChecklistPage() {
         <div className="space-y-4">
           {report.length === 0 ? (
             <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
-              Nenhuma rotina prevista para os filtros selecionados neste período.
+              Nenhum item previsto para os filtros selecionados neste período.
             </div>
           ) : (
             report.map((row) => {
@@ -1144,9 +1168,9 @@ export default function ChecklistPage() {
         </Modal>
       )}
 
-      {/* Modal Nova Tarefa Extra com Menção Inteligente */}
+      {/* Modal Nova Tarefa */}
       {showOneTimeModal && (
-        <Modal title="Nova tarefa / Pedido de aprovação" onClose={() => setShowOneTimeModal(false)}>
+        <Modal title="Nova Tarefa / Pedido de Aprovação" onClose={() => setShowOneTimeModal(false)}>
           <form onSubmit={handleCreateOneTimeTask} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
