@@ -74,6 +74,12 @@ interface Subtask {
   checklist_item_id: string;
   title: string;
   completed: boolean;
+  assigned_to?: string | null;
+}
+
+interface FormSubtask {
+  title: string;
+  assigned_to: string | null;
 }
 
 const DAYS_OF_WEEK = [
@@ -170,7 +176,9 @@ export default function ChecklistPage() {
   const [logs, setLogs] = useState<Record<string, Log>>({});
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({});
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  
   const [newSubtaskTexts, setNewSubtaskTexts] = useState<Record<string, string>>({});
+  const [newSubtaskAssignedTo, setNewSubtaskAssignedTo] = useState<Record<string, string>>({});
 
   const [oneTimeDoneBefore, setOneTimeDoneBefore] = useState<Set<string>>(new Set());
   const [users, setUsers] = useState<Profile[]>([]);
@@ -213,8 +221,9 @@ export default function ChecklistPage() {
   const [newInputLabel, setNewInputLabel] = useState("");
   const [newRequiresPhoto, setNewRequiresPhoto] = useState(false);
   
-  const [formSubtasks, setFormSubtasks] = useState<string[]>([]);
+  const [formSubtasks, setFormSubtasks] = useState<FormSubtask[]>([]);
   const [formSubtaskInput, setFormSubtaskInput] = useState("");
+  const [formSubtaskAssignedTo, setFormSubtaskAssignedTo] = useState("");
 
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<Template | null>(null);
@@ -246,7 +255,6 @@ export default function ChecklistPage() {
         profileData = myProfile;
         setCurrentUserProfile(myProfile);
         
-        // Atribui o ID do usuário logado ao filtro por padrão (para todos os perfis)
         setFilterUser(myProfile.id);
         
         if (myProfile.role === "member") {
@@ -353,9 +361,16 @@ export default function ChecklistPage() {
     const text = newSubtaskTexts[templateId]?.trim();
     if (!text) return;
 
+    const assigned = newSubtaskAssignedTo[templateId] || null;
+
     const { data, error } = await supabase
       .from("checklist_subtasks")
-      .insert({ checklist_item_id: templateId, title: text, completed: false })
+      .insert({ 
+        checklist_item_id: templateId, 
+        title: text, 
+        completed: false,
+        assigned_to: assigned
+      })
       .select()
       .single();
 
@@ -370,6 +385,7 @@ export default function ChecklistPage() {
         [templateId]: [...(prev[templateId] || []), data],
       }));
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
+      setNewSubtaskAssignedTo((prev) => ({ ...prev, [templateId]: "" }));
     }
   }
 
@@ -551,8 +567,9 @@ export default function ChecklistPage() {
     setNewRequiresPhoto(template.requires_photo || false);
     
     const currentSubs = subtasks[template.id] || [];
-    setFormSubtasks(currentSubs.map((s) => s.title));
+    setFormSubtasks(currentSubs.map((s) => ({ title: s.title, assigned_to: s.assigned_to || null })));
     setFormSubtaskInput("");
+    setFormSubtaskAssignedTo("");
 
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -573,6 +590,7 @@ export default function ChecklistPage() {
     setNewRequiresPhoto(false);
     setFormSubtasks([]);
     setFormSubtaskInput("");
+    setFormSubtaskAssignedTo("");
   }
 
   async function handleSaveTemplate(e: React.FormEvent) {
@@ -614,9 +632,10 @@ export default function ChecklistPage() {
     const saved = result.data as Template;
 
     if (formSubtasks.length > 0) {
-      const subtaskInserts = formSubtasks.map((stTitle) => ({
+      const subtaskInserts = formSubtasks.map((st) => ({
         checklist_item_id: saved.id,
-        title: stTitle,
+        title: st.title,
+        assigned_to: st.assigned_to,
         completed: false,
       }));
       await supabase.from("checklist_subtasks").insert(subtaskInserts);
@@ -665,7 +684,6 @@ export default function ChecklistPage() {
 
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
-      // Alterado: Mesmo que um usuário específico esteja filtrado, as tarefas atribuídas a "Todos / Equipe" (!t.assigned_to) também aparecem
       const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to;
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
       const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
@@ -987,20 +1005,25 @@ export default function ChecklistPage() {
                                   <ul className="space-y-1.5">
                                     {itemSubtasks.map((sub) => (
                                       <li key={sub.id} className="flex items-center justify-between gap-2 text-sm">
-                                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                                        <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
                                           <input
                                             type="checkbox"
                                             checked={sub.completed}
                                             onChange={() => handleToggleSubtask(sub)}
-                                            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                                            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary mt-0.5 shrink-0"
                                           />
-                                          <span className={sub.completed ? "text-slate-400 line-through" : "text-slate-700"}>
+                                          <span className={`break-words ${sub.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
                                             {sub.title}
+                                            {sub.assigned_to && (
+                                              <span className="ml-2 inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                                                <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
+                                              </span>
+                                            )}
                                           </span>
                                         </label>
                                         <button
                                           onClick={() => handleDeleteSubtask(sub)}
-                                          className="text-slate-400 hover:text-red-600"
+                                          className="text-slate-400 hover:text-red-600 shrink-0 ml-2"
                                           title="Excluir subtarefa"
                                         >
                                           <Trash2 className="h-3.5 w-3.5" />
@@ -1010,19 +1033,27 @@ export default function ChecklistPage() {
                                   </ul>
                                 )}
 
-                                <form onSubmit={(e) => handleAddSubtask(t.id, e)} className="mt-2 flex gap-2">
+                                <form onSubmit={(e) => handleAddSubtask(t.id, e)} className="mt-3 flex flex-wrap gap-2 sm:flex-nowrap">
                                   <input
                                     type="text"
                                     placeholder="Adicionar nova subtarefa..."
                                     value={newSubtaskTexts[t.id] || ""}
-                                    onChange={(e) =>
-                                      setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: e.target.value }))
-                                    }
-                                    className="flex-1 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs outline-none focus:border-primary"
+                                    onChange={(e) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                                    className="flex-1 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-primary min-w-[200px]"
                                   />
+                                  <select
+                                    value={newSubtaskAssignedTo[t.id] || ""}
+                                    onChange={(e) => setNewSubtaskAssignedTo((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                                    className="rounded border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary max-w-[140px] truncate"
+                                  >
+                                    <option value="">Equipe / Sem dono</option>
+                                    {users.map((u) => (
+                                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                                    ))}
+                                  </select>
                                   <button
                                     type="submit"
-                                    className="rounded bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary/90"
+                                    className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90 shrink-0"
                                   >
                                     Adicionar
                                   </button>
@@ -1190,36 +1221,57 @@ export default function ChecklistPage() {
 
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
               <span className="text-sm font-medium text-slate-700">Subtarefas Padrão (Passos)</span>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Ex: Verificar temperatura"
-                  value={formSubtaskInput}
-                  onChange={(e) => setFormSubtaskInput(e.target.value)}
-                  className={inputCls}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (formSubtaskInput.trim()) {
-                      setFormSubtasks((prev) => [...prev, formSubtaskInput.trim()]);
-                      setFormSubtaskInput("");
-                    }
-                  }}
-                  className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700"
-                >
-                  Adicionar
-                </button>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Ex: Verificar temperatura"
+                    value={formSubtaskInput}
+                    onChange={(e) => setFormSubtaskInput(e.target.value)}
+                    className={inputCls + " flex-1"}
+                  />
+                  <select
+                    value={formSubtaskAssignedTo}
+                    onChange={(e) => setFormSubtaskAssignedTo(e.target.value)}
+                    className={inputCls + " max-w-[130px] !px-2 truncate"}
+                  >
+                    <option value="">Equipe</option>
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (formSubtaskInput.trim()) {
+                        setFormSubtasks((prev) => [...prev, { title: formSubtaskInput.trim(), assigned_to: formSubtaskAssignedTo || null }]);
+                        setFormSubtaskInput("");
+                        setFormSubtaskAssignedTo("");
+                      }
+                    }}
+                    className="rounded bg-slate-800 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700 shrink-0"
+                  >
+                    Adicionar
+                  </button>
+                </div>
               </div>
+              
               {formSubtasks.length > 0 && (
                 <ul className="mt-2 space-y-1">
                   {formSubtasks.map((st, idx) => (
                     <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
-                      <span>{st}</span>
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="truncate">{st.title}</span>
+                        {st.assigned_to && (
+                          <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0">
+                            <UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}
+                          </span>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => setFormSubtasks((prev) => prev.filter((_, i) => i !== idx))}
-                        className="text-red-500 hover:text-red-700"
+                        className="text-red-500 hover:text-red-700 ml-2 shrink-0"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
