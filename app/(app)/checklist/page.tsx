@@ -735,7 +735,6 @@ export default function ChecklistPage() {
       const itemSubs = subtasks[t.id] || [];
       const hasSubtaskAssignedToUser = filterUser !== "all" && itemSubs.some(s => s.assigned_to === filterUser);
 
-      // Agora a tarefa aparece se for do utilizador, da equipe, ou se tiver subtarefa atribuída a ele
       const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to || hasSubtaskAssignedToUser;
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
       const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
@@ -1511,11 +1510,9 @@ export default function ChecklistPage() {
               <input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} />
             </Field>
             
-            <div className="space-y-2">
-              <Field label="Descrição">
-                <textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} />
-              </Field>
-            </div>
+            <Field label="Descrição">
+              <textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} />
+            </Field>
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria">
@@ -1568,6 +1565,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return (
     <label className="block space-y-1.5">
       <span className="text-sm font-medium text-slate-700">{label}</span>
+      {children}
     </label>
   );
 }
