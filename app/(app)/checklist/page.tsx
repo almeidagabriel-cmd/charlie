@@ -254,7 +254,6 @@ export default function ChecklistPage() {
       if (myProfile) {
         profileData = myProfile;
         setCurrentUserProfile(myProfile);
-        
         setFilterUser(myProfile.id);
         
         if (myProfile.role === "member") {
@@ -386,6 +385,18 @@ export default function ChecklistPage() {
       }));
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
       setNewSubtaskAssignedTo((prev) => ({ ...prev, [templateId]: "" }));
+
+      // Envia notificação se foi atribuído a alguém específico
+      if (assigned && assigned !== currentUser) {
+        const senderName = currentUserProfile?.full_name || "Alguém";
+        await supabase.from("notifications").insert({
+          user_id: assigned,
+          title: "Nova subtarefa atribuída",
+          message: `${senderName} marcou-o na subtarefa: "${text}"`,
+        });
+      }
+
+      toast.success("Subtarefa adicionada e notificação enviada!");
     }
   }
 
