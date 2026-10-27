@@ -429,17 +429,18 @@ export default function ChecklistPage() {
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
       setNewSubtaskAssignedTo((prev) => ({ ...prev, [templateId]: "" }));
 
-      if (assigned && assigned !== currentUser) {
+      // Notifica sempre que houver um responsável atribuído na subtarefa
+      if (assigned) {
         const senderName = currentUserProfile?.full_name || "Alguém";
         await supabase.from("notifications").insert({
           user_id: assigned,
-          title: "Nova subtarefa atribuída",
+          title: "Nova pergunta / aprovação",
           message: `${senderName} marcou-o na subtarefa: "${text}"`,
         });
         fetchNotifications();
       }
 
-      toast.success("Subtarefa adicionada!");
+      toast.success("Subtarefa adicionada e notificação enviada!");
     }
   }
 
@@ -600,13 +601,12 @@ export default function ChecklistPage() {
         }));
         const { data: insertedSubs } = await supabase.from("checklist_subtasks").insert(subtaskInserts).select();
         if (insertedSubs) {
-          // Envia notificação para os responsáveis pelas subtarefas
           for (const sub of insertedSubs) {
-            if (sub.assigned_to && sub.assigned_to !== currentUser) {
+            if (sub.assigned_to) {
               const senderName = currentUserProfile?.full_name || "Alguém";
               await supabase.from("notifications").insert({
                 user_id: sub.assigned_to,
-                title: "Nova subtarefa atribuída",
+                title: "Nova pergunta / aprovação",
                 message: `${senderName} marcou-o na subtarefa: "${sub.title}"`,
               });
             }
@@ -1580,7 +1580,6 @@ export default function ChecklistPage() {
               )}
             </div>
 
-            {/* Secção de Subtarefas/Perguntas de Aprovação no Modal */}
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
               <span className="text-sm font-medium text-slate-700">Perguntas ou Passos de Aprovação</span>
               <div className="flex gap-2">
