@@ -194,7 +194,7 @@ export default function ChecklistPage() {
   const [showOneTimeModal, setShowOneTimeModal] = useState(false);
   const [oneTimeTitle, setOneTimeTitle] = useState("");
   const [oneTimeDesc, setOneTimeDesc] = useState("");
-  const [oneTimeCategory, setOneTimeCategory] = useState("Geral"); // Alterado para Geral
+  const [oneTimeCategory, setOneTimeCategory] = useState("Geral");
   const [oneTimeAssignedTo, setOneTimeAssignedTo] = useState("");
   const [oneTimeEmpresa, setOneTimeEmpresa] = useState("");
   const [oneTimeSetor, setOneTimeSetor] = useState("Geral / Todos");
@@ -245,8 +245,11 @@ export default function ChecklistPage() {
       if (myProfile) {
         profileData = myProfile;
         setCurrentUserProfile(myProfile);
+        
+        // Atribui o ID do usuário logado ao filtro por padrão (para todos os perfis)
+        setFilterUser(myProfile.id);
+        
         if (myProfile.role === "member") {
-          setFilterUser(myProfile.id);
           if (myProfile.empresas && myProfile.empresas.length === 1) {
              setFilterEmpresa(myProfile.empresas[0]);
           }
@@ -662,7 +665,8 @@ export default function ChecklistPage() {
 
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
-      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || (isColaborador && !t.assigned_to);
+      // Alterado: Mesmo que um usuário específico esteja filtrado, as tarefas atribuídas a "Todos / Equipe" (!t.assigned_to) também aparecem
+      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to;
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
       const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
 
