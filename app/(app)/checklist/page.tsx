@@ -1016,7 +1016,8 @@ export default function ChecklistPage() {
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
-  const visibleTasks = useMemo(() => {
+  // Filtro base para a lista (respeita utilizador, empresa e setor)
+  const baseFilteredTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
       const itemMsgs = taskMessages[t.id] || [];
@@ -1037,9 +1038,14 @@ export default function ChecklistPage() {
         if (!assignedToMe && t.assigned_to) return false;
       }
 
-      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa && (!hideCompleted || !isDone(t));
+      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa;
     });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, hideCompleted, logs, currentUser]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, currentUser]);
+
+  // Lista visível na tela (aplica o filtro de ocultar concluídas apenas aqui)
+  const visibleTasks = useMemo(() => {
+    return baseFilteredTasks.filter((t) => !hideCompleted || !isDone(t));
+  }, [baseFilteredTasks, hideCompleted, logs]);
 
   const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
   const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
@@ -1055,8 +1061,10 @@ export default function ChecklistPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [currentTabTasks]);
 
-  const doneCount = currentTabTasks.filter(isDone).length;
-  const totalCount = currentTabTasks.length;
+  // Cálculo correto do progresso baseado em todas as tarefas do filtro (baseFilteredTasks), ignorando o ocultar concluídas
+  const currentTabBaseTasks = activeTab === "daily" ? baseFilteredTasks.filter(t => !t.is_one_time) : activeTab === "tasks" ? baseFilteredTasks.filter(t => t.is_one_time) : [];
+  const doneCount = currentTabBaseTasks.filter(isDone).length;
+  const totalCount = currentTabBaseTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
   const report = useMemo(() => {
@@ -1064,7 +1072,7 @@ export default function ChecklistPage() {
     const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
 
     targetUsersForReport.forEach(u => {
-      const userTasks = visibleTasks.filter(t => t.assigned_to === u.id);
+      const userTasks = baseFilteredTasks.filter(t => t.assigned_to === u.id);
       let done = 0;
       userTasks.forEach(t => { if (isDone(t)) done++; });
       rows.push({
@@ -1076,7 +1084,7 @@ export default function ChecklistPage() {
     });
 
     return rows.sort((a, b) => b.total - a.total);
-  }, [visibleUsers, visibleTasks, logs]);
+  }, [visibleUsers, baseFilteredTasks, logs]);
 
   const rhReportData = useMemo(() => {
     let totalAssigned = 0;
