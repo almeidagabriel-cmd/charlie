@@ -35,6 +35,9 @@ import {
   Clock,
   BarChart3,
   MessageSquare,
+  Check,
+  AlertCircle,
+  TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -349,6 +352,8 @@ export default function ChecklistPage() {
   const [filterEmpresa, setFilterEmpresa] = useState<string>("all");
   const [filterSetor, setFilterSetor] = useState<string>("all");
   
+  const todayStr = todayLocal();
+
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [completingTemplate, setCompletingTemplate] = useState<Template | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -392,11 +397,15 @@ export default function ChecklistPage() {
   const [deletingTemplate, setDeletingTemplate] = useState<Template | null>(null);
 
   const userRole = currentUserProfile?.role ?? "colaborador";
+  const userEmail = (currentUserProfile?.email || "").toLowerCase();
+  
   const isColaborador = userRole === "colaborador" || userRole === "member";
   const isDiretor = userRole === "diretor";
   const isGerente = userRole === "gerente";
   const isAnalista = userRole === "analista";
   
+  const isHRAnalyst = isAnalista && (userEmail.includes("rh") || userEmail.includes("recursos") || userEmail.includes("pessoal") || userRole === "analista");
+  const canAccessHRReport = isDiretor || isHRAnalyst;
   const isPrivileged = !isColaborador;
 
   useEffect(() => { fetchInitialData(); }, []);
@@ -1067,53 +1076,103 @@ export default function ChecklistPage() {
   const totalCount = currentTabBaseTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
-  const report = useMemo(() => {
-    const targetUsersForReport = visibleUsers;
-    const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
+  // --- Novo Relatório de RH Individualizado e Completo ---
+  const detailedHrReport = useMemo(() => {
+    const rows: Array<{
+      id: string;
+      name: string;
+      email: string | null;
+      totalAssigned: number;
+      completed: number;
+      pending: number;
+      onTime: number;
+      delayed: number;
+      overduePending: number;
+      completionRate: number;
+    }> = [];
 
-    targetUsersForReport.forEach(u => {
-      const userTasks = baseFilteredTasks.filter(t => t.assigned_to === u.id);
-      let done = 0;
-      userTasks.forEach(t => { if (isDone(t)) done++; });
+    visibleUsers.forEach(u => {
+      const userTasks = dueInRange.filter(t => t.assigned_to === u.id);
+      let completed = 0;
+      let onTime = 0;
+      let delayed = 0;
+      let overduePending = 0;
+
+      userTasks.forEach(t => {
+        const log = logs[t.id];
+        const isFinished = !!log?.completed;
+
+        if (isFinished) {
+          completed++;
+          const deadline = t.due_date || t.expected_resolution_date;
+          const finishedDate = log.completed_at ? toLocalDateString(log.completed_at) : log.date;
+          
+          if (!deadline || finishedDate <= deadline) {
+            onTime++;
+          } else {
+            delayed++;
+          }
+        } else {
+          const deadline = t.due_date || t.expected_resolution_date;
+          if (deadline && deadline < todayStr) {
+            overduePending++;
+          }
+        }
+      });
+
+      const pending = userTasks.length - completed;
+      const completionRate = userTasks.length ? Math.round((completed / userTasks.length) * 100) : 0;
+
       rows.push({
         id: u.id,
-        total: userTasks.length,
-        done: done,
-        pending: userTasks.filter(t => !isDone(t))
+        name: u.full_name || u.email || "Usuário",
+        email: u.email,
+        totalAssigned: userTasks.length,
+        completed,
+        pending,
+        onTime,
+        delayed,
+        overduePending,
+        completionRate,
       });
     });
 
-    return rows.sort((a, b) => b.total - a.total);
-  }, [visibleUsers, baseFilteredTasks, logs]);
+    return rows.sort((a, b) => b.totalAssigned - a.totalAssigned);
+  }, [visibleUsers, dueInRange, logs, todayStr]);
 
   const rhReportData = useMemo(() => {
     let totalAssigned = 0;
     let totalCompleted = 0;
     let totalNotDone = 0;
+    let totalOnTime = 0;
 
-    templates.forEach(t => {
-      const assignedUser = users.find(u => u.id === t.assigned_to);
-      const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
-      if (isAlmeidaGabriel) return;
-
-      totalAssigned++;
-      if (logs[t.id]?.completed) {
-        totalCompleted++;
-      } else {
-        totalNotDone++;
-      }
+    detailedHrReport.forEach(r => {
+      totalAssigned += r.totalAssigned;
+      totalCompleted += r.completed;
+      totalNotDone += r.pending;
+      totalOnTime += r.onTime;
     });
 
     const uncompletedIndex = totalAssigned > 0 ? Math.round((totalNotDone / totalAssigned) * 100) : 0;
+    const onTimeRate = totalCompleted > 0 ? Math.round((totalOnTime / totalCompleted) * 100) : 0;
 
     return {
       totalAssigned,
       totalCompleted,
       totalNotDone,
-      avgAcceptTimeHours: "0",
+      onTimeRate,
       uncompletedIndex,
     };
-  }, [templates, logs, users]);
+  }, [detailedHrReport]);
+
+  const report = useMemo(() => {
+    return detailedHrReport.map(r => ({
+      id: r.id,
+      total: r.totalAssigned,
+      done: r.completed,
+      pending: dueInRange.filter(t => t.assigned_to === r.id && !isDone(t))
+    }));
+  }, [detailedHrReport, dueInRange, logs]);
 
   const manageList = useMemo(() => {
     let filtered = templates.filter((t) => !t.is_one_time);
@@ -1129,13 +1188,12 @@ export default function ChecklistPage() {
     { id: "tasks" as const, label: "Gerenciamento de Tarefas", icon: ListTodo },
     ...(isPrivileged ? [
       { id: "reports" as const, label: "Acompanhamento", icon: Users },
-      { id: "rh_report" as const, label: "Relatório RH", icon: BarChart3 },
+      ...(canAccessHRReport ? [{ id: "rh_report" as const, label: "Relatório RH", icon: BarChart3 }] : []),
       { id: "manage" as const, label: "Gerenciar Rotinas", icon: Repeat }
     ] : []),
   ];
 
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
-  const todayStr = todayLocal();
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -1151,7 +1209,7 @@ export default function ChecklistPage() {
               : activeTab === "tasks" 
                 ? "Gestão de tarefas pontuais, pedidos e aprovações com prazos." 
                 : activeTab === "rh_report"
-                  ? "Indicadores de desempenho, tempo de aceite e tarefas não realizadas (Rotinas e Tarefas)."
+                  ? "Indicadores detalhados de desempenho, pontualidade e volume por colaborador."
                   : "Gestão operacional e acompanhamento de equipe."}
           </p>
         </div>
@@ -1479,64 +1537,81 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Aba de Relatório para RH */}
-      {activeTab === "rh_report" && isPrivileged && (
+      {/* Relatório para RH Completo e Individualizado */}
+      {activeTab === "rh_report" && canAccessHRReport && (
         <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-4">
             <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tempo Médio de Aceite</span>
-              <p className="mt-2 text-3xl font-bold text-slate-900">N/D</p>
-              <p className="mt-1 text-xs text-slate-400">Indicador em atualização.</p>
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total de Demandas</span>
+              <p className="mt-2 text-3xl font-bold text-slate-900">{rhReportData.totalAssigned}</p>
+              <p className="mt-1 text-xs text-slate-400">Rotinas e tarefas no período.</p>
             </div>
 
             <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Não Realizadas</span>
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Taxa de Entrega no Prazo</span>
+              <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.onTimeRate}%</p>
+              <p className="mt-1 text-xs text-slate-400">Entregues sem ultrapassar o prazo.</p>
+            </div>
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Pendências</span>
               <p className={`mt-2 text-3xl font-bold ${rhReportData.uncompletedIndex > 30 ? "text-red-600" : "text-amber-600"}`}>{rhReportData.uncompletedIndex}%</p>
-              <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} de {rhReportData.totalAssigned} rotinas e tarefas pendentes.</p>
+              <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} itens pendentes.</p>
             </div>
 
             <div className="rounded-xl border bg-white p-5 shadow-sm">
               <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Concluídas</span>
-              <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.totalCompleted} <span className="text-sm font-normal text-slate-500">itens</span></p>
-              <p className="mt-1 text-xs text-slate-400">Total de entregas (rotinas + tarefas).</p>
+              <p className="mt-2 text-3xl font-bold text-primary">{rhReportData.totalCompleted}</p>
+              <p className="mt-1 text-xs text-slate-400">Itens finalizados pela equipe.</p>
             </div>
           </div>
 
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">Desempenho Individual por Colaborador (Rotinas e Tarefas)</h3>
+          <div className="rounded-xl border bg-white p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">Desempenho Individualizado da Equipe</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Visão detalhada por colaborador: volume, pontualidade nas entregas e pendências vencidas.</p>
+              </div>
+            </div>
+
             <div className="divide-y overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-600">
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold">
                   <tr>
                     <th className="p-3">Colaborador</th>
-                    <th className="p-3">Itens Atribuídos</th>
-                    <th className="p-3">Concluídos</th>
-                    <th className="p-3">Pendentes / Não Realizados</th>
+                    <th className="p-3 text-center">Atribuídas</th>
+                    <th className="p-3 text-center">Concluídas</th>
+                    <th className="p-3 text-center text-emerald-700">No Prazo</th>
+                    <th className="p-3 text-center text-amber-600">Com Atraso</th>
+                    <th className="p-3 text-center text-red-600">Vencidas (Aberto)</th>
                     <th className="p-3">Taxa de Conclusão</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {report.map((r) => {
-                    const pctUser = r.total ? Math.round((r.done / r.total) * 100) : 0;
-                    return (
-                      <tr key={r.id || "team"} className="hover:bg-slate-50">
-                        <td className="p-3 font-medium text-slate-900 flex items-center gap-2">
-                          <UserIcon className="h-4 w-4 text-slate-400" /> {userName(r.id)}
-                        </td>
-                        <td className="p-3">{r.total}</td>
-                        <td className="p-3 text-emerald-600 font-semibold">{r.done}</td>
-                        <td className="p-3 text-red-600 font-semibold">{r.pending.length}</td>
-                        <td className="p-3">
-                          <div className="flex items-center gap-2">
-                            <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
-                              <div className={`h-full ${pctUser === 100 ? "bg-emerald-500" : pctUser >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${pctUser}%` }} />
-                            </div>
-                            <span className="text-xs font-medium">{pctUser}%</span>
+                  {detailedHrReport.map((r) => (
+                    <tr key={r.id} className="hover:bg-slate-50">
+                      <td className="p-3 font-medium text-slate-900 flex items-center gap-2">
+                        <UserIcon className="h-4 w-4 text-slate-400" />
+                        <div>
+                          <p>{r.name}</p>
+                          <p className="text-[11px] text-slate-400 font-normal">{r.email || "Sem e-mail"}</p>
+                        </div>
+                      </td>
+                      <td className="p-3 text-center font-semibold">{r.totalAssigned}</td>
+                      <td className="p-3 text-center text-emerald-600 font-semibold">{r.completed}</td>
+                      <td className="p-3 text-center font-medium text-emerald-700 bg-emerald-50/50">{r.onTime}</td>
+                      <td className="p-3 text-center font-medium text-amber-600 bg-amber-50/30">{r.delayed}</td>
+                      <td className="p-3 text-center font-medium text-red-600 bg-red-50/50">{r.overduePending}</td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
+                            <div className={`h-full ${r.completionRate === 100 ? "bg-emerald-500" : r.completionRate >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${r.completionRate}%` }} />
                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          <span className="text-xs font-medium">{r.completionRate}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
