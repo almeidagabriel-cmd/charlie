@@ -148,7 +148,8 @@ function MentionInput({
 
     const cursor = e.target.selectionStart || 0;
     const textBeforeCursor = val.slice(0, cursor);
-    const match = textBeforeCursor.match(/@([a-zA-Z0-9_\s]*)$/);
+    // Aceita letras acentuadas (João, Conceição...), números, _, ponto e espaços
+    const match = textBeforeCursor.match(/@([\p{L}\p{N}_.\s]*)$/u);
 
     if (match) {
       setSearch(match[1]);
@@ -301,6 +302,25 @@ function recurrenceText(t: Template) {
   return RECURRENCE_LABEL[t.recurrence_type] ?? "Todos os dias";
 }
 
+// Encontra todos os usuários marcados com @Nome no texto
+function extractMentionedUserIds(text: string, users: Profile[]): string[] {
+  let remaining = text.toLowerCase();
+  const ids = new Set<string>();
+  // nomes mais longos primeiro: "@Ana Paula" não deve virar também "@Ana"
+  const sorted = [...users].sort(
+    (a, b) => (b.full_name || b.email || "").length - (a.full_name || a.email || "").length
+  );
+  for (const u of sorted) {
+    const name = (u.full_name || u.email || "").toLowerCase();
+    const tag = `@${name}`;
+    if (name && remaining.includes(tag)) {
+      ids.add(u.id);
+      remaining = remaining.split(tag).join(" ");
+    }
+  }
+  return [...ids];
+}
+
 // --- Página Principal ---
 export default function ChecklistPage() {
   const [supabase] = useState(() => createClient());
@@ -375,28 +395,37 @@ export default function ChecklistPage() {
   const isGestor = userRole === "gestor";
 
   useEffect(() => { fetchInitialData(); }, []);
-  useEffect(() => { if (currentUser) fetchNotifications(); }, [currentUser]);
+
+  // Notificações: carga inicial + tempo real para o usuário logado
+  useEffect(() => {
+    if (!currentUser) return;
+    fetchNotifications();
+
+    const channel = supabase
+      .channel(`notif_${currentUser}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${currentUser}` },
+        (payload) => {
+          const n = payload.new as NotificationItem;
+          setNotifications(prev => (prev.some(p => p.id === n.id) ? prev : [n, ...prev]));
+          toast(n.title, { description: n.message });
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [currentUser]);
+
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
+  // Envia notificação para OUTRO usuário (não adiciona na tela de quem envia)
   async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
     if (!userId || userId === currentUser) return;
-    const newNotif: NotificationItem = {
-      id: `local_notif_${Date.now()}_${Math.random()}`,
-      title,
-      message,
-      read: false,
-      created_at: new Date().toISOString()
-    };
-    setNotifications(prev => [newNotif, ...prev]);
-
-    try {
-      await supabase.from("notifications").insert({
-        user_id: userId,
-        title,
-        message
-      });
-    } catch (err) {
-      // Ignora erro de RLS do servidor caso ocorra
+    const { error } = await supabase.from("notifications").insert({ user_id: userId, title, message });
+    if (error) {
+      console.error("[notifications] falha ao inserir:", error);
+      toast.error("A notificação não foi enviada", { description: error.message });
     }
   }
 
@@ -439,16 +468,15 @@ export default function ChecklistPage() {
 
   async function fetchNotifications() {
     if (!currentUser) return;
-    const { data } = await supabase.from("notifications").select("*").eq("user_id", currentUser).order("created_at", { ascending: false }).limit(20);
+    const { data, error } = await supabase.from("notifications").select("*").eq("user_id", currentUser).order("created_at", { ascending: false }).limit(20);
+    if (error) console.error("[notifications] falha ao carregar:", error);
     if (data) {
       setNotifications(data);
     }
   }
 
   async function markNotificationAsRead(id: string) {
-    if (!id.startsWith("local_")) {
-      await supabase.from("notifications").update({ read: true }).eq("id", id);
-    }
+    await supabase.from("notifications").update({ read: true }).eq("id", id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   }
 
@@ -546,23 +574,17 @@ export default function ChecklistPage() {
       toast.success("Mensagem enviada!");
 
       const task = templates.find(t => t.id === templateId);
-      
-      let targetId = assignedUserId;
-      if (!targetId) {
-        for (const u of users) {
-          if (u.full_name && text.toLowerCase().includes(`@${u.full_name.toLowerCase()}`)) {
-            targetId = u.id;
-            break;
-          }
-        }
-      }
-
-      if (oneTimeFormSubtasks.length > 0 && !editingOneTimeId) {
-        const subtaskInserts = oneTimeFormSubtasks.map((st) => ({ checklist_item_id: data.id, title: st.title, assigned_to: st.assigned_to ?? null, completed: false }));
-        await supabase.from("checklist_subtasks").insert(subtaskInserts);      }
-
       const taskTitle = task?.title || "Tarefa";
-      await safeSendNotification(targetId, `Nova mensagem em "${taskTitle}"`, `${senderName}: ${text}`);
+
+      // Todos os usuários marcados com @ no texto + o selecionado no dropdown
+      const mentioned = new Set(extractMentionedUserIds(text, users));
+      if (assignedUserId) mentioned.add(assignedUserId);
+
+      await Promise.all(
+        [...mentioned].map(id =>
+          safeSendNotification(id, `Você foi mencionado em "${taskTitle}"`, `${senderName}: ${text}`)
+        )
+      );
     }
   }
 
