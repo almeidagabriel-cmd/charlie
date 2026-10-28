@@ -110,6 +110,7 @@ interface NotificationItem {
   message: string;
   read: boolean;
   created_at: string;
+  template_id?: string;
 }
 
 // --- Componente Inteligente de Menção (@) ---
@@ -389,7 +390,11 @@ export default function ChecklistPage() {
   const userRole = currentUserProfile?.role ?? "member";
   const isColaborador = userRole === "member";
   const isDiretor = userRole === "diretor";
-  const isGestor = userRole === "gestor";
+  const isGerente = userRole === "gerente";
+  const isAnalista = userRole === "analista";
+  
+  // Quem tem permissão administrativa/gerencial (Diretor, Gerente e Analista)
+  const isPrivileged = !isColaborador;
 
   useEffect(() => { fetchInitialData(); }, []);
 
@@ -415,17 +420,17 @@ export default function ChecklistPage() {
 
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
-  // CORRIGIDO: Não envia notificação para si mesmo e evita o erro da base de dados
-  async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
+  async function safeSendNotification(userId: string | null | undefined, title: string, message: string, templateId?: string) {
     if (!userId || userId === currentUser) return;
     
-    const { error } = await supabase.from("notifications").insert({ 
-      user_id: userId, 
-      title, 
-      message 
-    });
-    
-    if (error) {
+    try {
+      await supabase.from("notifications").insert({ 
+        user_id: userId, 
+        title, 
+        message,
+        template_id: templateId || null 
+      });
+    } catch (error) {
       console.error("[notifications] falha ao inserir:", error);
     }
   }
@@ -479,6 +484,38 @@ export default function ChecklistPage() {
   async function markNotificationAsRead(id: string) {
     await supabase.from("notifications").update({ read: true }).eq("id", id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  }
+
+  function handleNotificationClick(n: NotificationItem) {
+    if (!n.read) markNotificationAsRead(n.id);
+    setShowNotifications(false);
+
+    if (n.template_id) {
+      const task = templates.find(t => t.id === n.template_id);
+      
+      if (task) {
+        setActiveTab(task.is_one_time ? "tasks" : "daily");
+
+        if (hideCompleted && logs[task.id]?.completed) {
+          setHideCompleted(false);
+        }
+
+        setExpandedItems(prev => ({ ...prev, [task.id]: true }));
+
+        setTimeout(() => {
+          const element = document.getElementById(`task-${task.id}`);
+          if (element) {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+            element.classList.add("ring-2", "ring-primary", "bg-primary/5", "transition-all", "duration-500");
+            setTimeout(() => {
+              element.classList.remove("ring-2", "ring-primary", "bg-primary/5");
+            }, 2500);
+          }
+        }, 300);
+      } else {
+        toast.info("A tarefa desta notificação não foi encontrada ou foi excluída.");
+      }
+    }
   }
 
   async function fetchSubtasks(templateIds: string[]) {
@@ -582,7 +619,7 @@ export default function ChecklistPage() {
 
       await Promise.all(
         [...mentioned].map(id =>
-          safeSendNotification(id, `Você foi mencionado em "${taskTitle}"`, `${senderName}: ${text}`)
+          safeSendNotification(id, `Você foi mencionado em "${taskTitle}"`, `${senderName}: ${text}`, templateId)
         )
       );
     }
@@ -608,7 +645,7 @@ export default function ChecklistPage() {
 
       if (assignedUserId) {
         const senderName = currentUserProfile?.full_name || "Alguém";
-        await safeSendNotification(assignedUserId, "Nova pergunta / passo", `${senderName} marcou-o: "${text}"`);
+        await safeSendNotification(assignedUserId, "Nova pergunta / passo", `${senderName} marcou-o: "${text}"`, templateId);
       }
     }
   }
@@ -633,7 +670,7 @@ export default function ChecklistPage() {
 
     if (template.created_by && template.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
-      await safeSendNotification(template.created_by, "Tarefa Aceita", `${senderName} aceitou e iniciou a tarefa: "${template.title}"`);
+      await safeSendNotification(template.created_by, "Tarefa Aceita", `${senderName} aceitou e iniciou a tarefa: "${template.title}"`, template.id);
     }
   }
 
@@ -722,7 +759,7 @@ export default function ChecklistPage() {
     const tmpl = templates.find(t => t.id === templateId);
     if (tmpl && tmpl.created_by && tmpl.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
-      await safeSendNotification(tmpl.created_by, "Tarefa Concluída", `${senderName} concluiu a tarefa: "${tmpl.title}"`);
+      await safeSendNotification(tmpl.created_by, "Tarefa Concluída", `${senderName} concluiu a tarefa: "${tmpl.title}"`, templateId);
     }
   }
 
@@ -814,7 +851,7 @@ export default function ChecklistPage() {
         
         const senderName = currentUserProfile?.full_name || "Alguém";
         for (const sub of subtaskInserts) {
-           if (sub.assigned_to) await safeSendNotification(sub.assigned_to, "Nova pergunta / aprovação", `${senderName} marcou-o: "${sub.title}"`);
+           if (sub.assigned_to) await safeSendNotification(sub.assigned_to, "Nova pergunta / aprovação", `${senderName} marcou-o: "${sub.title}"`, data.id);
         }
         
         fetchSubtasks([data.id]);
@@ -829,7 +866,7 @@ export default function ChecklistPage() {
         
         if (targetUser && targetUser !== currentUser) {
           const senderName = currentUserProfile?.full_name || "Alguém";
-          await safeSendNotification(targetUser, "Nova Tarefa Recebida", `${senderName} enviou uma tarefa: "${data.title}"`);
+          await safeSendNotification(targetUser, "Nova Tarefa Recebida", `${senderName} enviou uma tarefa: "${data.title}"`, data.id);
         }
       }
       
@@ -929,7 +966,7 @@ export default function ChecklistPage() {
         }
       }
 
-      if (isGestor) {
+      if (isGerente || isAnalista) {
         const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
         const subtaskAssignedToMe = (subtasks[t.id] || []).some(s => s.assigned_to === currentUser);
         const messageAssignedToMe = (taskMessages[t.id] || []).some(m => m.user_id === currentUser);
@@ -950,7 +987,7 @@ export default function ChecklistPage() {
       }
       return false;
     });
-  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGestor, users, currentUser, subtasks, taskMessages]);
+  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGerente, isAnalista, users, currentUser, subtasks, taskMessages]);
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
@@ -1057,7 +1094,7 @@ export default function ChecklistPage() {
   const tabs = [
     { id: "daily" as const, label: "Rotinas Diárias", icon: CheckSquare },
     { id: "tasks" as const, label: "Gerenciamento de Tarefas", icon: ListTodo },
-    ...(!isColaborador ? [
+    ...(isPrivileged ? [
       { id: "reports" as const, label: "Acompanhamento", icon: Users },
       { id: "rh_report" as const, label: "Relatório RH", icon: BarChart3 },
       { id: "manage" as const, label: "Gerenciar Rotinas", icon: Repeat }
@@ -1106,7 +1143,7 @@ export default function ChecklistPage() {
                 {notifications.length === 0 ? <p className="py-4 text-center text-xs text-slate-400">Nenhuma notificação</p> : (
                   <ul className="max-h-60 overflow-y-auto space-y-2">
                     {notifications.map((n) => (
-                      <li key={n.id} onClick={() => markNotificationAsRead(n.id)} className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors ${n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium"}`}>
+                      <li key={n.id} onClick={() => handleNotificationClick(n)} className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors ${n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium hover:bg-slate-100"}`}>
                         <p className="font-semibold">{n.title}</p>
                         <p className="mt-0.5">{n.message}</p>
                         <span className="mt-1 block text-[10px] text-slate-400">{new Date(n.created_at).toLocaleString("pt-BR")}</span>
@@ -1144,7 +1181,7 @@ export default function ChecklistPage() {
             </button>
           </div>
 
-          {!isColaborador && (
+          {isPrivileged && (
             <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
               <Filter className="h-4 w-4 text-slate-500" />
               <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="bg-transparent outline-none max-w-[120px] truncate">
@@ -1213,7 +1250,7 @@ export default function ChecklistPage() {
                     const isOverdue = t.due_date && t.due_date < todayStr && !done;
 
                     return (
-                      <li key={t.id} className={`flex flex-col px-4 py-4 ${requiresAcceptance ? "bg-amber-50/30" : ""}`}>
+                      <li key={t.id} id={`task-${t.id}`} className={`flex flex-col px-4 py-4 ${requiresAcceptance ? "bg-amber-50/30" : ""}`}>
                         <div className="flex items-start gap-3">
                           <button onClick={() => handleCheckClick(t)} disabled={togglingId === t.id} className="mt-0.5 shrink-0 disabled:opacity-50">
                             {togglingId === t.id ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : done ? <CheckCircle2 className="h-6 w-6 text-emerald-500" /> : <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />}
@@ -1233,7 +1270,7 @@ export default function ChecklistPage() {
                               </div>
                               
                               <div className="flex items-center gap-2">
-                                {t.is_one_time && (t.created_by === currentUser || !isColaborador) && !done && (
+                                {t.is_one_time && (t.created_by === currentUser || isPrivileged) && !done && (
                                   <button onClick={() => handleEditOneTimeTask(t)} className="text-slate-400 hover:text-slate-700 bg-slate-50 px-2 py-1 rounded" title="Editar Tarefa">
                                     <Pencil className="h-4 w-4" />
                                   </button>
@@ -1378,7 +1415,7 @@ export default function ChecklistPage() {
       )}
 
       {/* Aba de Relatório para RH */}
-      {activeTab === "rh_report" && !isColaborador && (
+      {activeTab === "rh_report" && isPrivileged && (
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border bg-white p-5 shadow-sm">
@@ -1443,7 +1480,7 @@ export default function ChecklistPage() {
       )}
 
       {/* Tabs Reports e Manage */}
-      {activeTab === "reports" && !isColaborador && (
+      {activeTab === "reports" && isPrivileged && (
         <div className="space-y-4">
           {report.length === 0 ? (
             <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
@@ -1473,7 +1510,7 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {activeTab === "manage" && !isColaborador && (
+      {activeTab === "manage" && isPrivileged && (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
           <form onSubmit={handleSaveTemplate} className="h-fit space-y-4 rounded-xl border bg-white p-5">
             <div className="flex items-center justify-between">
@@ -1579,7 +1616,7 @@ export default function ChecklistPage() {
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-              {!isColaborador && (
+              {isPrivileged && (
                 <Field label="Responsável">
                   <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
                     <option value="">Equipe (Sem dono)</option>
@@ -1652,5 +1689,4 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
       </div>
     </div>
   );
-  
 }
