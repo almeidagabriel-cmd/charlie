@@ -189,7 +189,7 @@ function MentionInput({
       onSubmit={(e) => {
         e.preventDefault();
         if (!value.trim()) return;
-        onSubmit(value, assignedUserId);
+        onSubmit(value, assignedUserId ?? null);
         setAssignedUserId(null);
         setShowDropdown(false);
       }}
@@ -355,7 +355,6 @@ export default function ChecklistPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  // Estados para o Modal de Aceite com Prazo
   const [acceptingTask, setAcceptingTask] = useState<Template | null>(null);
   const [resolutionDate, setResolutionDate] = useState("");
 
@@ -398,7 +397,6 @@ export default function ChecklistPage() {
   const isGerente = userRole === "gerente";
   const isAnalista = userRole === "analista";
   
-  // Quem tem permissão administrativa/gerencial (Diretor, Gerente, Analista e Admin)
   const isPrivileged = !isColaborador;
 
   useEffect(() => { fetchInitialData(); }, []);
@@ -666,7 +664,6 @@ export default function ChecklistPage() {
     }));
   }
 
-  // Função para confirmar o aceite da tarefa informando a data prevista
   async function confirmAcceptTask(e: React.FormEvent) {
     e.preventDefault();
     if (!acceptingTask) return;
@@ -686,7 +683,6 @@ export default function ChecklistPage() {
     setTemplates((prev) => prev.map((t) => t.id === acceptingTask.id ? { ...t, accepted: true, expected_resolution_date: resolutionDate || null } : t));
     toast.success("Tarefa aceita com sucesso!");
 
-    // Notifica o criador da tarefa com o prazo previsto
     if (acceptingTask.created_by && acceptingTask.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
       const dateStr = resolutionDate ? new Date(resolutionDate + "T00:00:00").toLocaleDateString('pt-BR') : "Sem prazo definido";
@@ -835,7 +831,7 @@ export default function ChecklistPage() {
     setOneTimeDueDate(template.due_date ? template.due_date.split("T")[0] : "");
     
     const currentSubs = subtasks[template.id] || [];
-    setOneTimeFormSubtasks(currentSubs.map(s => ({ title: s.title, assigned_to: s.assigned_to || null })));
+    setOneTimeFormSubtasks(currentSubs.map(s => ({ title: s.title, assigned_to: s.assigned_to ?? null })));
     setShowOneTimeModal(true);
   }
 
@@ -965,7 +961,7 @@ export default function ChecklistPage() {
     toast.success("Excluído com sucesso.");
   }
 
-  const userName = (id: string | null) => {
+  const userName = (id: string | null | undefined) => {
     if (!id) return "Todos / Equipe";
     const u = users.find((x) => x.id === id);
     return u?.full_name || u?.email || "—";
@@ -1277,9 +1273,18 @@ export default function ChecklistPage() {
                     const requiresAcceptance = t.is_one_time && t.assigned_to && !t.accepted;
                     const canAccept = requiresAcceptance && t.assigned_to === currentUser;
                     const isOverdue = t.due_date && t.due_date < todayStr && !done;
+                    const isTaskReceived = t.created_by && t.created_by !== currentUser;
 
                     return (
-                      <li key={t.id} id={`task-${t.id}`} className={`flex flex-col px-4 py-4 ${requiresAcceptance ? "bg-amber-50/30" : ""}`}>
+                      <li 
+                        key={t.id} 
+                        id={`task-${t.id}`} 
+                        className={`flex flex-col px-4 py-4 transition-colors border-l-4 ${
+                          isTaskReceived 
+                            ? "bg-sky-50/40 border-l-sky-500" 
+                            : "bg-white border-l-emerald-500"
+                        } ${requiresAcceptance ? "bg-amber-50/30 border-l-amber-500" : ""}`}
+                      >
                         <div className="flex items-start gap-3">
                           <button onClick={() => handleCheckClick(t)} disabled={togglingId === t.id} className="mt-0.5 shrink-0 disabled:opacity-50">
                             {togglingId === t.id ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : done ? <CheckCircle2 className="h-6 w-6 text-emerald-500" /> : <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />}
@@ -1326,7 +1331,16 @@ export default function ChecklistPage() {
                               <span className="flex items-center gap-1 text-primary/80 font-medium"><Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas"}</span>
                               {t.setor && <span className="flex items-center gap-1 text-indigo-600 font-medium"><Briefcase className="h-3.5 w-3.5" /> {t.setor}</span>}
                               <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}</span>
-                              {t.created_by && <span className="flex items-center gap-1 text-amber-700 font-medium"><ArrowUpRight className="h-3.5 w-3.5" /> Enviado por: {userName(t.created_by)}</span>}
+                              
+                              {isTaskReceived ? (
+                                <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
+                                  <ArrowUpRight className="h-3 w-3 rotate-180" /> Recebida de: {userName(t.created_by)}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
+                                  <ArrowUpRight className="h-3 w-3" /> Enviado por: {userName(t.created_by)}
+                                </span>
+                              )}
                             </div>
 
                             {requiresAcceptance && !done && (
@@ -1388,7 +1402,7 @@ export default function ChecklistPage() {
                                     <MentionInput
                                       value={newSubtaskTexts[t.id] || ""}
                                       onChange={(val) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: val }))}
-                                      onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId)}
+                                      onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId ?? null)}
                                       users={users}
                                       placeholder="Adicionar passo ou pergunta obrigatória... (Use @ para direcionar)"
                                       buttonLabel="Adicionar Passo"
@@ -1436,7 +1450,7 @@ export default function ChecklistPage() {
                                   <MentionInput
                                     value={taskMessageInputs[t.id] || ""}
                                     onChange={(val) => setTaskMessageInputs(prev => ({ ...prev, [t.id]: val }))}
-                                    onSubmit={(text, assignedToId) => handleAddTaskMessage(t.id, text, assignedToId)}
+                                    onSubmit={(text, assignedToId) => handleAddTaskMessage(t.id, text, assignedToId ?? null)}
                                     users={users}
                                     placeholder="Escreva uma mensagem... (Use @ para marcar alguém)"
                                     buttonLabel="Enviar"
@@ -1597,7 +1611,7 @@ export default function ChecklistPage() {
                  value={formSubtaskInput}
                  onChange={setFormSubtaskInput}
                  onSubmit={(text, assignedToId) => {
-                   setFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
+                   setFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
                    setFormSubtaskInput("");
                  }}
                  users={visibleUsers}
@@ -1722,7 +1736,7 @@ export default function ChecklistPage() {
                    value={oneTimeSubInput}
                    onChange={oneTimeSubInput => setOneTimeSubInput(oneTimeSubInput)}
                    onSubmit={(text, assignedToId) => {
-                     setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
+                     setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
                      setOneTimeSubInput("");
                    }}
                    users={visibleUsers}
@@ -1752,7 +1766,7 @@ const inputCls = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 t
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block space-y-1.5"><span className="text-sm font-medium text-slate-700">{label}</span>{children}</label>; }
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3"><h3 className="font-semibold text-slate-900">{title}</h3><button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button></div>
         {children}
