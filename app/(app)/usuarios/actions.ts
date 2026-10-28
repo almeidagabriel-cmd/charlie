@@ -8,7 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { ActionResult, UserRole } from "@/lib/types";
 
-const roleSchema = z.enum(["admin", "manager", "member", "diretor", "analista", "gerente"]);
+const roleSchema = z.enum(["admin", "manager", "member", "diretor", "analista", "gerente", "colaborador"]);
 
 const createUserSchema = z.object({
   email: z.string().trim().toLowerCase().email("E-mail inválido."),
