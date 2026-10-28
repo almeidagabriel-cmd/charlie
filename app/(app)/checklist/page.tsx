@@ -44,7 +44,7 @@ interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
-  role: string; // Ex: 'admin', 'diretor', 'gestor', 'member'
+  role: string;
   empresas?: string[] | null;
 }
 
@@ -68,7 +68,6 @@ interface Template {
   is_one_time: boolean;
   due_date?: string | null;
   accepted?: boolean;
-  accepted_at?: string | null;
   created_at?: string;
 }
 
@@ -553,12 +552,11 @@ export default function ChecklistPage() {
 
   async function handleAcceptTask(template: Template) {
     setTogglingId(template.id);
-    const nowIso = new Date().toISOString();
-    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true, accepted_at: nowIso }).eq("id", template.id);
+    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true }).eq("id", template.id);
     setTogglingId(null);
     if (error) return void toast.error("Erro ao aceitar a tarefa.");
     
-    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true, accepted_at: nowIso } : t));
+    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true } : t));
     toast.success("Tarefa aceita com sucesso!");
     
     if (template.created_by && template.created_by !== currentUser) {
@@ -809,14 +807,12 @@ export default function ChecklistPage() {
       const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
       if (isAlmeidaGabriel) return false;
 
-      // Restrições de Diretor
       if (isDiretor && t.assigned_to) {
         if (assignedUser?.role === "diretor" && t.assigned_to !== currentUser) {
           return false;
         }
       }
 
-      // Restrições de Gestor (só vê tarefas que tem vínculo direto: ele criou ou foi atribuída a ele)
       if (isGestor) {
         const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
         const subtaskAssignedToMe = (subtasks[t.id] || []).some(s => s.assigned_to === currentUser);
@@ -854,7 +850,6 @@ export default function ChecklistPage() {
         hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) || t.empresa === "Todas / Grupo B&A" : true;
       }
 
-      // Se for colaborador, garante que ele vê tarefas enviadas a diretores/gestores destinadas a ele
       if (isColaborador) {
         const assignedToMe = t.assigned_to === currentUser || itemSubs.some(s => s.assigned_to === currentUser);
         if (!assignedToMe && t.assigned_to) return false;
@@ -901,13 +896,10 @@ export default function ChecklistPage() {
     return rows.sort((a, b) => b.total - a.total);
   }, [visibleUsers, visibleTasks, logs]);
 
-  // Cálculos para o Relatório RH (Incluindo Rotinas Diárias e Tarefas)
   const rhReportData = useMemo(() => {
     let totalAssigned = 0;
     let totalCompleted = 0;
     let totalNotDone = 0;
-    let totalAcceptTimeMinutes = 0;
-    let acceptCount = 0;
 
     templates.forEach(t => {
       const assignedUser = users.find(u => u.id === t.assigned_to);
@@ -920,24 +912,15 @@ export default function ChecklistPage() {
       } else {
         totalNotDone++;
       }
-
-      if (t.accepted && t.created_at && t.accepted_at) {
-        const created = new Date(t.created_at).getTime();
-        const accepted = new Date(t.accepted_at).getTime();
-        const diffMin = Math.max(0, (accepted - created) / (1000 * 60));
-        totalAcceptTimeMinutes += diffMin;
-        acceptCount++;
-      }
     });
 
-    const avgAcceptTimeHours = acceptCount > 0 ? (totalAcceptTimeMinutes / acceptCount / 60).toFixed(1) : "0";
     const uncompletedIndex = totalAssigned > 0 ? Math.round((totalNotDone / totalAssigned) * 100) : 0;
 
     return {
       totalAssigned,
       totalCompleted,
       totalNotDone,
-      avgAcceptTimeHours,
+      avgAcceptTimeHours: "0",
       uncompletedIndex,
     };
   }, [templates, logs, users]);
@@ -1281,8 +1264,8 @@ export default function ChecklistPage() {
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border bg-white p-5 shadow-sm">
               <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tempo Médio de Aceite</span>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{rhReportData.avgAcceptTimeHours} <span className="text-sm font-normal text-slate-500">horas</span></p>
-              <p className="mt-1 text-xs text-slate-400">Média de tempo até o responsável aceitar a tarefa.</p>
+              <p className="mt-2 text-3xl font-bold text-slate-900">N/D</p>
+              <p className="mt-1 text-xs text-slate-400">Indicador em atualização.</p>
             </div>
 
             <div className="rounded-xl border bg-white p-5 shadow-sm">
