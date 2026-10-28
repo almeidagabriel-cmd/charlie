@@ -520,7 +520,7 @@ export default function ChecklistPage() {
       checklist_item_id: templateId,
       title: secretTitle,
       completed: false,
-      assigned_to: assignedUserId 
+      assigned_to: assignedUserId ?? null
     }).select().single();
 
     if (error) {
@@ -547,7 +547,6 @@ export default function ChecklistPage() {
 
       const task = templates.find(t => t.id === templateId);
       
-      // Detecção inteligente de menção por @ no texto caso o assignedUserId venha nulo
       let targetId = assignedUserId;
       if (!targetId) {
         for (const u of users) {
@@ -558,10 +557,9 @@ export default function ChecklistPage() {
         }
       }
 
-      // Se ainda não achou, direciona para o responsável da tarefa ou para quem a criou
-      if (!targetId) {
-        targetId = (task?.assigned_to !== currentUser ? task?.assigned_to : null) || (task?.created_by !== currentUser ? task?.created_by : null);
-      }
+      if (oneTimeFormSubtasks.length > 0 && !editingOneTimeId) {
+        const subtaskInserts = oneTimeFormSubtasks.map((st) => ({ checklist_item_id: data.id, title: st.title, assigned_to: st.assigned_to ?? null, completed: false }));
+        await supabase.from("checklist_subtasks").insert(subtaskInserts);      }
 
       const taskTitle = task?.title || "Tarefa";
       await safeSendNotification(targetId, `Nova mensagem em "${taskTitle}"`, `${senderName}: ${text}`);
@@ -573,7 +571,7 @@ export default function ChecklistPage() {
       checklist_item_id: templateId, 
       title: text, 
       completed: false,
-      assigned_to: assignedUserId
+      assigned_to: assignedUserId ?? null
     }).select().single();
 
     if (error) return void toast.error("Erro ao adicionar passo/pergunta");
@@ -759,14 +757,14 @@ export default function ChecklistPage() {
 
     setIsSavingTask(true);
 
-    const targetUser = isColaborador ? currentUser : oneTimeAssignedTo || null;
+    const targetUser = isColaborador ? currentUser : (oneTimeAssignedTo || null);
     const payload = {
       title: oneTimeTitle, 
       description: oneTimeDesc, 
       category: oneTimeCategory, 
       empresa: oneTimeEmpresa || "Todas / Grupo B&A",
       setor: oneTimeSetor || "Geral / Todos", 
-      assigned_to: targetUser, 
+      assigned_to: targetUser ?? null, 
       due_date: oneTimeDueDate || null,
       recurrence_type: "daily" as RecurrenceType, 
       is_one_time: true,
@@ -789,7 +787,7 @@ export default function ChecklistPage() {
     
     if (data) {
       if (oneTimeFormSubtasks.length > 0 && !editingOneTimeId) {
-        const subtaskInserts = oneTimeFormSubtasks.map((st) => ({ checklist_item_id: data.id, title: st.title, assigned_to: st.assigned_to, completed: false }));
+        const subtaskInserts = oneTimeFormSubtasks.map((st) => ({ checklist_item_id: data.id, title: st.title, assigned_to: st.assigned_to ?? null, completed: false }));
         await supabase.from("checklist_subtasks").insert(subtaskInserts);
         
         const senderName = currentUserProfile?.full_name || "Alguém";
@@ -862,7 +860,7 @@ export default function ChecklistPage() {
     if (result.error) { setSavingTemplate(false); return void toast.error("Erro ao salvar"); }
     const saved = result.data as Template;
     if (formSubtasks.length > 0) {
-      const subtaskInserts = formSubtasks.map((st) => ({ checklist_item_id: saved.id, title: st.title, assigned_to: st.assigned_to, completed: false }));
+      const subtaskInserts = formSubtasks.map((st) => ({ checklist_item_id: saved.id, title: st.title, assigned_to: st.assigned_to ?? null, completed: false }));
       await supabase.from("checklist_subtasks").insert(subtaskInserts);
     }
     setSavingTemplate(false);
