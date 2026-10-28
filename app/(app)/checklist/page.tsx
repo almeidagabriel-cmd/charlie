@@ -33,6 +33,7 @@ import {
   ListTodo,
   ThumbsUp,
   Clock,
+  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -67,6 +68,7 @@ interface Template {
   is_one_time: boolean;
   due_date?: string | null;
   accepted?: boolean;
+  accepted_at?: string | null;
   created_at?: string;
 }
 
@@ -303,7 +305,7 @@ function recurrenceText(t: Template) {
 // --- Página Principal ---
 export default function ChecklistPage() {
   const [supabase] = useState(() => createClient());
-  const [activeTab, setActiveTab] = useState<"daily" | "tasks" | "reports" | "manage">("daily");
+  const [activeTab, setActiveTab] = useState<"daily" | "tasks" | "reports" | "rh_report" | "manage">("daily");
   const [templates, setTemplates] = useState<Template[]>([]);
   const [logs, setLogs] = useState<Record<string, Log>>({});
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({});
@@ -320,8 +322,6 @@ export default function ChecklistPage() {
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  
-  // ALTERADO AQUI: Definido como true para ocultar as concluídas por padrão ao entrar
   const [hideCompleted, setHideCompleted] = useState(true);
   
   const [startDate, setStartDate] = useState(todayLocal());
@@ -347,6 +347,7 @@ export default function ChecklistPage() {
   const [oneTimeDueDate, setOneTimeDueDate] = useState("");
   const [oneTimeFormSubtasks, setOneTimeFormSubtasks] = useState<FormSubtask[]>([]);
   const [oneTimeSubInput, setOneTimeSubInput] = useState("");
+  const [isSavingTask, setIsSavingTask] = useState(false); // Estado para evitar cliques duplicados
 
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -551,11 +552,12 @@ export default function ChecklistPage() {
 
   async function handleAcceptTask(template: Template) {
     setTogglingId(template.id);
-    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true }).eq("id", template.id);
+    const nowIso = new Date().toISOString();
+    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true, accepted_at: nowIso }).eq("id", template.id);
     setTogglingId(null);
     if (error) return void toast.error("Erro ao aceitar a tarefa.");
     
-    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true } : t));
+    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true, accepted_at: nowIso } : t));
     toast.success("Tarefa aceita com sucesso!");
     
     if (template.created_by && template.created_by !== currentUser) {
@@ -657,7 +659,9 @@ export default function ChecklistPage() {
 
   async function handleSaveOneTimeTask(e: React.FormEvent) {
     e.preventDefault();
-    if (!oneTimeTitle.trim()) return;
+    if (!oneTimeTitle.trim() || isSavingTask) return;
+
+    setIsSavingTask(true); // Bloqueia novos cliques até terminar
 
     const targetUser = isColaborador ? currentUser : oneTimeAssignedTo || null;
     const payload = {
@@ -680,7 +684,11 @@ export default function ChecklistPage() {
        result = await supabase.from("daily_checklist_templates").insert({ ...payload, created_by: currentUser }).select().single();
     }
 
-    if (result.error) return void toast.error("Não foi possível salvar a tarefa");
+    if (result.error) {
+      setIsSavingTask(false);
+      return void toast.error("Não foi possível salvar a tarefa");
+    }
+
     const data = result.data as Template;
     
     if (data) {
@@ -713,6 +721,7 @@ export default function ChecklistPage() {
       setShowOneTimeModal(false);
       setActiveTab("tasks");
     }
+    setIsSavingTask(false);
   }
 
   function handleToggleCustomDay(dayVal: number) {
@@ -781,8 +790,12 @@ export default function ChecklistPage() {
     return u?.full_name || u?.email || "—";
   };
 
+  // Regra: O admin almeida.gabriel não recebe tarefas e nem aparece nas listas/seleções
   const visibleUsers = useMemo(() => {
     return users.filter(u => {
+      const emailOrName = (u.email || "").toLowerCase() + " " + (u.full_name || "").toLowerCase();
+      if (emailOrName.includes("almeida.gabriel")) return false;
+
       if (isDiretor) {
         if (u.role === "diretor" && u.id !== currentUser) return false;
       }
@@ -792,8 +805,12 @@ export default function ChecklistPage() {
 
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
+      // Ignora se estiver atribuído ao almeida.gabriel
+      const assignedUser = users.find(u => u.id === t.assigned_to);
+      const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
+      if (isAlmeidaGabriel) return false;
+
       if (isDiretor && t.assigned_to) {
-        const assignedUser = users.find(u => u.id === t.assigned_to);
         if (assignedUser?.role === "diretor" && t.assigned_to !== currentUser) {
           return false;
         }
@@ -870,6 +887,44 @@ export default function ChecklistPage() {
     return rows.sort((a, b) => b.total - a.total);
   }, [visibleUsers, visibleTasks, logs]);
 
+  // Cálculos para o Relatório RH
+  const rhReportData = useMemo(() => {
+    const tasksToCheck = templates.filter(t => t.is_one_time);
+    let totalAssigned = 0;
+    let totalCompleted = 0;
+    let totalNotDone = 0;
+    let totalAcceptTimeMinutes = 0;
+    let acceptCount = 0;
+
+    tasksToCheck.forEach(t => {
+      totalAssigned++;
+      if (logs[t.id]?.completed) {
+        totalCompleted++;
+      } else {
+        totalNotDone++;
+      }
+
+      if (t.accepted && t.created_at && t.accepted_at) {
+        const created = new Date(t.created_at).getTime();
+        const accepted = new Date(t.accepted_at).getTime();
+        const diffMin = Math.max(0, (accepted - created) / (1000 * 60));
+        totalAcceptTimeMinutes += diffMin;
+        acceptCount++;
+      }
+    });
+
+    const avgAcceptTimeHours = acceptCount > 0 ? (totalAcceptTimeMinutes / acceptCount / 60).toFixed(1) : "0";
+    const uncompletedIndex = totalAssigned > 0 ? Math.round((totalNotDone / totalAssigned) * 100) : 0;
+
+    return {
+      totalAssigned,
+      totalCompleted,
+      totalNotDone,
+      avgAcceptTimeHours,
+      uncompletedIndex,
+    };
+  }, [templates, logs]);
+
   const manageList = useMemo(() => {
     let filtered = templates.filter((t) => !t.is_one_time);
     if (filterEmpresa !== "all") filtered = filtered.filter(t => t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A");
@@ -882,7 +937,11 @@ export default function ChecklistPage() {
   const tabs = [
     { id: "daily" as const, label: "Rotinas Diárias", icon: CheckSquare },
     { id: "tasks" as const, label: "Gerenciamento de Tarefas", icon: ListTodo },
-    ...(!isColaborador ? [{ id: "reports" as const, label: "Acompanhamento", icon: Users }, { id: "manage" as const, label: "Gerenciar Rotinas", icon: Repeat }] : []),
+    ...(!isColaborador ? [
+      { id: "reports" as const, label: "Acompanhamento", icon: Users },
+      { id: "rh_report" as const, label: "Relatório RH", icon: BarChart3 },
+      { id: "manage" as const, label: "Gerenciar Rotinas", icon: Repeat }
+    ] : []),
   ];
 
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
@@ -894,14 +953,16 @@ export default function ChecklistPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            {activeTab === "daily" ? "Rotinas Diárias" : activeTab === "tasks" ? "Gerenciamento de Tarefas" : "Checklist e Tarefas"}
+            {activeTab === "daily" ? "Rotinas Diárias" : activeTab === "tasks" ? "Gerenciamento de Tarefas" : activeTab === "rh_report" ? "Relatório de RH" : "Checklist e Tarefas"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {activeTab === "daily" 
               ? "Acompanhe e valide as rotinas operacionais recorrentes." 
               : activeTab === "tasks" 
                 ? "Gestão de tarefas pontuais, pedidos e aprovações com prazos." 
-                : "Gestão operacional e acompanhamento de equipe."}
+                : activeTab === "rh_report"
+                  ? "Indicadores de desempenho, tempo de aceite e tarefas não realizadas."
+                  : "Gestão operacional e acompanhamento de equipe."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1197,6 +1258,71 @@ export default function ChecklistPage() {
         </div>
       )}
 
+      {/* Aba de Relatório para RH */}
+      {activeTab === "rh_report" && !isColaborador && (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tempo Médio de Aceite</span>
+              <p className="mt-2 text-3xl font-bold text-slate-900">{rhReportData.avgAcceptTimeHours} <span className="text-sm font-normal text-slate-500">horas</span></p>
+              <p className="mt-1 text-xs text-slate-400">Média de tempo até o responsável aceitar a tarefa.</p>
+            </div>
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Não Realizadas</span>
+              <p className={`mt-2 text-3xl font-bold ${rhReportData.uncompletedIndex > 30 ? "text-red-600" : "text-amber-600"}`}>{rhReportData.uncompletedIndex}%</p>
+              <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} de {rhReportData.totalAssigned} tarefas pendentes.</p>
+            </div>
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Concluídas</span>
+              <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.totalCompleted} <span className="text-sm font-normal text-slate-500">tarefas</span></p>
+              <p className="mt-1 text-xs text-slate-400">Total de entregas registradas no período.</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">Desempenho Individual por Colaborador (RH)</h3>
+            <div className="divide-y overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-600">
+                <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold">
+                  <tr>
+                    <th className="p-3">Colaborador</th>
+                    <th className="p-3">Tarefas Atribuídas</th>
+                    <th className="p-3">Concluídas</th>
+                    <th className="p-3">Pendentes / Não Realizadas</th>
+                    <th className="p-3">Taxa de Conclusão</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {report.map((r) => {
+                    const pctUser = r.total ? Math.round((r.done / r.total) * 100) : 0;
+                    return (
+                      <tr key={r.id || "team"} className="hover:bg-slate-50">
+                        <td className="p-3 font-medium text-slate-900 flex items-center gap-2">
+                          <UserIcon className="h-4 w-4 text-slate-400" /> {userName(r.id)}
+                        </td>
+                        <td className="p-3">{r.total}</td>
+                        <td className="p-3 text-emerald-600 font-semibold">{r.done}</td>
+                        <td className="p-3 text-red-600 font-semibold">{r.pending.length}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
+                              <div className={`h-full ${pctUser === 100 ? "bg-emerald-500" : pctUser >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${pctUser}%` }} />
+                            </div>
+                            <span className="text-xs font-medium">{pctUser}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tabs Reports e Manage */}
       {activeTab === "reports" && !isColaborador && (
         <div className="space-y-4">
@@ -1245,7 +1371,7 @@ export default function ChecklistPage() {
             
             <div className="grid grid-cols-2 gap-3">
               <Field label="Categoria"><select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-              <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
+              <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
             </div>
             <Field label="Recorrência">
               <select value={newRecurrenceType} onChange={(e) => setNewRecurrenceType(e.target.value as RecurrenceType)} className={inputCls}>
@@ -1275,7 +1401,7 @@ export default function ChecklistPage() {
                    setFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
                    setFormSubtaskInput("");
                  }}
-                 users={users}
+                 users={visibleUsers}
                  placeholder="Ex: Verificar portas (Use @...)"
               />
             </div>
@@ -1321,9 +1447,9 @@ export default function ChecklistPage() {
         </Modal>
       )}
 
-      {/* Modal Nova Tarefa Extra (ou Edição) */}
+      {/* Modal Nova Tarefa Extra (ou Edição) com Proteção contra Duplo Clique */}
       {showOneTimeModal && (
-        <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => setShowOneTimeModal(false)}>
+        <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
           <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
@@ -1381,9 +1507,9 @@ export default function ChecklistPage() {
             </div>
             
             <div className="flex justify-end gap-2 mt-2">
-              <button type="button" onClick={() => setShowOneTimeModal(false)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-              <button type="submit" className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600">
-                {editingOneTimeId ? <Pencil className="h-4 w-4" /> : <Zap className="h-4 w-4" />} 
+              <button type="button" onClick={() => setShowOneTimeModal(false)} disabled={isSavingTask} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+              <button type="submit" disabled={isSavingTask} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
+                {isSavingTask ? <Loader2 className="h-4 w-4 animate-spin" /> : editingOneTimeId ? <Pencil className="h-4 w-4" /> : <Zap className="h-4 w-4" />} 
                 {editingOneTimeId ? "Salvar Tarefa" : "Criar tarefa"}
               </button>
             </div>
