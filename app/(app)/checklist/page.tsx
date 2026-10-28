@@ -44,7 +44,7 @@ interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
-  role: string;
+  role: string; // Ex: 'admin', 'diretor', 'gestor', 'member'
   empresas?: string[] | null;
 }
 
@@ -347,7 +347,7 @@ export default function ChecklistPage() {
   const [oneTimeDueDate, setOneTimeDueDate] = useState("");
   const [oneTimeFormSubtasks, setOneTimeFormSubtasks] = useState<FormSubtask[]>([]);
   const [oneTimeSubInput, setOneTimeSubInput] = useState("");
-  const [isSavingTask, setIsSavingTask] = useState(false); // Estado para evitar cliques duplicados
+  const [isSavingTask, setIsSavingTask] = useState(false);
 
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -372,6 +372,7 @@ export default function ChecklistPage() {
   const userRole = currentUserProfile?.role ?? "member";
   const isColaborador = userRole === "member";
   const isDiretor = userRole === "diretor";
+  const isGestor = userRole === "gestor";
 
   useEffect(() => { fetchInitialData(); }, []);
   useEffect(() => { if (currentUser) fetchNotifications(); }, [currentUser]);
@@ -661,7 +662,7 @@ export default function ChecklistPage() {
     e.preventDefault();
     if (!oneTimeTitle.trim() || isSavingTask) return;
 
-    setIsSavingTask(true); // Bloqueia novos cliques até terminar
+    setIsSavingTask(true);
 
     const targetUser = isColaborador ? currentUser : oneTimeAssignedTo || null;
     const payload = {
@@ -790,7 +791,6 @@ export default function ChecklistPage() {
     return u?.full_name || u?.email || "—";
   };
 
-  // Regra: O admin almeida.gabriel não recebe tarefas e nem aparece nas listas/seleções
   const visibleUsers = useMemo(() => {
     return users.filter(u => {
       const emailOrName = (u.email || "").toLowerCase() + " " + (u.full_name || "").toLowerCase();
@@ -805,15 +805,22 @@ export default function ChecklistPage() {
 
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
-      // Ignora se estiver atribuído ao almeida.gabriel
       const assignedUser = users.find(u => u.id === t.assigned_to);
       const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
       if (isAlmeidaGabriel) return false;
 
+      // Restrições de Diretor
       if (isDiretor && t.assigned_to) {
         if (assignedUser?.role === "diretor" && t.assigned_to !== currentUser) {
           return false;
         }
+      }
+
+      // Restrições de Gestor (só vê tarefas que tem vínculo direto: ele criou ou foi atribuída a ele)
+      if (isGestor) {
+        const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
+        const subtaskAssignedToMe = (subtasks[t.id] || []).some(s => s.assigned_to === currentUser);
+        if (!isMyTask && !subtaskAssignedToMe) return false;
       }
 
       if (t.is_one_time) {
@@ -830,7 +837,7 @@ export default function ChecklistPage() {
       }
       return false;
     });
-  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, users, currentUser]);
+  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGestor, users, currentUser, subtasks]);
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
@@ -846,9 +853,16 @@ export default function ChecklistPage() {
       if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
         hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) || t.empresa === "Todas / Grupo B&A" : true;
       }
+
+      // Se for colaborador, garante que ele vê tarefas enviadas a diretores/gestores destinadas a ele
+      if (isColaborador) {
+        const assignedToMe = t.assigned_to === currentUser || itemSubs.some(s => s.assigned_to === currentUser);
+        if (!assignedToMe && t.assigned_to) return false;
+      }
+
       return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa && (!hideCompleted || !isDone(t));
     });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, hideCompleted, logs]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, hideCompleted, logs, currentUser]);
 
   const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
   const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
@@ -887,16 +901,19 @@ export default function ChecklistPage() {
     return rows.sort((a, b) => b.total - a.total);
   }, [visibleUsers, visibleTasks, logs]);
 
-  // Cálculos para o Relatório RH
+  // Cálculos para o Relatório RH (Incluindo Rotinas Diárias e Tarefas)
   const rhReportData = useMemo(() => {
-    const tasksToCheck = templates.filter(t => t.is_one_time);
     let totalAssigned = 0;
     let totalCompleted = 0;
     let totalNotDone = 0;
     let totalAcceptTimeMinutes = 0;
     let acceptCount = 0;
 
-    tasksToCheck.forEach(t => {
+    templates.forEach(t => {
+      const assignedUser = users.find(u => u.id === t.assigned_to);
+      const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
+      if (isAlmeidaGabriel) return;
+
       totalAssigned++;
       if (logs[t.id]?.completed) {
         totalCompleted++;
@@ -923,7 +940,7 @@ export default function ChecklistPage() {
       avgAcceptTimeHours,
       uncompletedIndex,
     };
-  }, [templates, logs]);
+  }, [templates, logs, users]);
 
   const manageList = useMemo(() => {
     let filtered = templates.filter((t) => !t.is_one_time);
@@ -961,7 +978,7 @@ export default function ChecklistPage() {
               : activeTab === "tasks" 
                 ? "Gestão de tarefas pontuais, pedidos e aprovações com prazos." 
                 : activeTab === "rh_report"
-                  ? "Indicadores de desempenho, tempo de aceite e tarefas não realizadas."
+                  ? "Indicadores de desempenho, tempo de aceite e tarefas não realizadas (Rotinas e Tarefas)."
                   : "Gestão operacional e acompanhamento de equipe."}
           </p>
         </div>
@@ -1271,26 +1288,26 @@ export default function ChecklistPage() {
             <div className="rounded-xl border bg-white p-5 shadow-sm">
               <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Não Realizadas</span>
               <p className={`mt-2 text-3xl font-bold ${rhReportData.uncompletedIndex > 30 ? "text-red-600" : "text-amber-600"}`}>{rhReportData.uncompletedIndex}%</p>
-              <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} de {rhReportData.totalAssigned} tarefas pendentes.</p>
+              <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} de {rhReportData.totalAssigned} rotinas e tarefas pendentes.</p>
             </div>
 
             <div className="rounded-xl border bg-white p-5 shadow-sm">
               <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Concluídas</span>
-              <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.totalCompleted} <span className="text-sm font-normal text-slate-500">tarefas</span></p>
-              <p className="mt-1 text-xs text-slate-400">Total de entregas registradas no período.</p>
+              <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.totalCompleted} <span className="text-sm font-normal text-slate-500">itens</span></p>
+              <p className="mt-1 text-xs text-slate-400">Total de entregas (rotinas + tarefas).</p>
             </div>
           </div>
 
           <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">Desempenho Individual por Colaborador (RH)</h3>
+            <h3 className="text-base font-semibold text-slate-800 mb-4">Desempenho Individual por Colaborador (Rotinas e Tarefas)</h3>
             <div className="divide-y overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-600">
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold">
                   <tr>
                     <th className="p-3">Colaborador</th>
-                    <th className="p-3">Tarefas Atribuídas</th>
-                    <th className="p-3">Concluídas</th>
-                    <th className="p-3">Pendentes / Não Realizadas</th>
+                    <th className="p-3">Itens Atribuídos</th>
+                    <th className="p-3">Concluídos</th>
+                    <th className="p-3">Pendentes / Não Realizados</th>
                     <th className="p-3">Taxa de Conclusão</th>
                   </tr>
                 </thead>
