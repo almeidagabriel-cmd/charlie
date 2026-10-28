@@ -1,3 +1,14 @@
+export const ROLES = ["admin", "manager", "member", "diretor", "analista", "gerente"] as const;
+
+export const ROLE_LABEL: Record<string, string> = {
+  admin: "Administrador",
+  manager: "Gestor",
+  member: "Colaborador",
+  diretor: "Diretor",
+  analista: "Analista",
+  gerente: "Gerente",
+};
+
 export const PRIORITY_CONFIG: Record<string, { label: string; className: string }> = {
   baixa: { label: "Baixa", className: "bg-slate-100 text-slate-700" },
   media: { label: "Média", className: "bg-blue-100 text-blue-700" },
