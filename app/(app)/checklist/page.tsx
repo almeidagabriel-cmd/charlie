@@ -378,7 +378,6 @@ export default function ChecklistPage() {
   useEffect(() => { if (currentUser) fetchNotifications(); }, [currentUser]);
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
-  // Notificações totalmente locais e resilientes baseadas no estado da aplicação, sem falhas de RLS
   async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
     if (!userId || userId === currentUser) return;
     const newNotif: NotificationItem = {
@@ -390,7 +389,6 @@ export default function ChecklistPage() {
     };
     setNotifications(prev => [newNotif, ...prev]);
 
-    // Tenta gravar no banco em segundo plano sem bloquear a interface
     try {
       await supabase.from("notifications").insert({
         user_id: userId,
@@ -441,8 +439,8 @@ export default function ChecklistPage() {
 
   async function fetchNotifications() {
     if (!currentUser) return;
-    const { data } = await supabase.from("notifications").select("*").eq("user_id", currentUser).order("created_at", { ascending: false }).limit(10);
-    if (data && data.length > 0) {
+    const { data } = await supabase.from("notifications").select("*").eq("user_id", currentUser).order("created_at", { ascending: false }).limit(20);
+    if (data) {
       setNotifications(data);
     }
   }
@@ -548,7 +546,23 @@ export default function ChecklistPage() {
       toast.success("Mensagem enviada!");
 
       const task = templates.find(t => t.id === templateId);
-      const targetId = assignedUserId || (task?.assigned_to) || (task?.created_by);
+      
+      // Detecção inteligente de menção por @ no texto caso o assignedUserId venha nulo
+      let targetId = assignedUserId;
+      if (!targetId) {
+        for (const u of users) {
+          if (u.full_name && text.toLowerCase().includes(`@${u.full_name.toLowerCase()}`)) {
+            targetId = u.id;
+            break;
+          }
+        }
+      }
+
+      // Se ainda não achou, direciona para o responsável da tarefa ou para quem a criou
+      if (!targetId) {
+        targetId = (task?.assigned_to !== currentUser ? task?.assigned_to : null) || (task?.created_by !== currentUser ? task?.created_by : null);
+      }
+
       const taskTitle = task?.title || "Tarefa";
       await safeSendNotification(targetId, `Nova mensagem em "${taskTitle}"`, `${senderName}: ${text}`);
     }
