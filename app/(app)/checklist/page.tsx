@@ -68,6 +68,7 @@ interface Template {
   requires_photo: boolean;
   is_one_time: boolean;
   due_date?: string | null;
+  expected_resolution_date?: string | null;
   accepted?: boolean;
   created_at?: string;
 }
@@ -354,6 +355,10 @@ export default function ChecklistPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // Estados para o Modal de Aceite com Prazo
+  const [acceptingTask, setAcceptingTask] = useState<Template | null>(null);
+  const [resolutionDate, setResolutionDate] = useState("");
+
   const [showOneTimeModal, setShowOneTimeModal] = useState(false);
   const [editingOneTimeId, setEditingOneTimeId] = useState<string | null>(null);
   const [oneTimeTitle, setOneTimeTitle] = useState("");
@@ -393,7 +398,7 @@ export default function ChecklistPage() {
   const isGerente = userRole === "gerente";
   const isAnalista = userRole === "analista";
   
-  // Quem tem permissão administrativa/gerencial (Diretor, Gerente e Analista)
+  // Quem tem permissão administrativa/gerencial (Diretor, Gerente, Analista e Admin)
   const isPrivileged = !isColaborador;
 
   useEffect(() => { fetchInitialData(); }, []);
@@ -661,19 +666,41 @@ export default function ChecklistPage() {
     }));
   }
 
-  async function handleAcceptTask(template: Template) {
-    setTogglingId(template.id);
-    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true }).eq("id", template.id);
+  // Função para confirmar o aceite da tarefa informando a data prevista
+  async function confirmAcceptTask(e: React.FormEvent) {
+    e.preventDefault();
+    if (!acceptingTask) return;
+
+    setTogglingId(acceptingTask.id);
+    const { error } = await supabase
+      .from("daily_checklist_templates")
+      .update({ 
+        accepted: true, 
+        expected_resolution_date: resolutionDate || null 
+      })
+      .eq("id", acceptingTask.id);
+
     setTogglingId(null);
     if (error) return void toast.error("Erro ao aceitar a tarefa.");
     
-    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true } : t));
+    setTemplates((prev) => prev.map((t) => t.id === acceptingTask.id ? { ...t, accepted: true, expected_resolution_date: resolutionDate || null } : t));
     toast.success("Tarefa aceita com sucesso!");
 
-    if (template.created_by && template.created_by !== currentUser) {
+    // Notifica o criador da tarefa com o prazo previsto
+    if (acceptingTask.created_by && acceptingTask.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
-      await safeSendNotification(template.created_by, "Tarefa Aceita", `${senderName} aceitou e iniciou a tarefa: "${template.title}"`, template.id);
+      const dateStr = resolutionDate ? new Date(resolutionDate + "T00:00:00").toLocaleDateString('pt-BR') : "Sem prazo definido";
+      
+      await safeSendNotification(
+        acceptingTask.created_by,
+        "Tarefa Aceita e com Prazo",
+        `${senderName} aceitou e iniciou a tarefa "${acceptingTask.title}". Previsão de resolução: ${dateStr}`,
+        acceptingTask.id
+      );
     }
+    
+    setAcceptingTask(null);
+    setResolutionDate("");
   }
 
   async function handleCheckClick(template: Template) {
@@ -1269,6 +1296,13 @@ export default function ChecklistPage() {
                                     Prazo: {new Date(t.due_date + "T00:00:00").toLocaleDateString('pt-BR')}
                                   </span>
                                 )}
+
+                                {t.expected_resolution_date && (
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${done ? "bg-slate-100 text-slate-500 border-slate-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
+                                    <Clock className="h-3 w-3" /> 
+                                    Previsão de entrega: {new Date(t.expected_resolution_date + "T00:00:00").toLocaleDateString('pt-BR')}
+                                  </span>
+                                )}
                               </div>
                               
                               <div className="flex items-center gap-2">
@@ -1302,7 +1336,14 @@ export default function ChecklistPage() {
                                   Para iniciar e conseguir concluir os passos, o responsável precisa aceitar a tarefa.
                                 </div>
                                 {canAccept && (
-                                  <button onClick={() => handleAcceptTask(t)} disabled={togglingId === t.id} className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors">
+                                  <button 
+                                    onClick={() => { 
+                                      setAcceptingTask(t); 
+                                      setResolutionDate(t.due_date || todayLocal()); 
+                                    }} 
+                                    disabled={togglingId === t.id} 
+                                    className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors"
+                                  >
                                     {togglingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
                                     Aceitar Tarefa
                                   </button>
@@ -1599,6 +1640,33 @@ export default function ChecklistPage() {
               <button type="button" onClick={() => setCompletingTemplate(null)} disabled={uploading} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
               <button type="submit" disabled={uploading} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Concluir
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal de Aceite com Definição de Prazo */}
+      {acceptingTask && (
+        <Modal title="Definir prazo de resolução" onClose={() => setAcceptingTask(null)}>
+          <form onSubmit={confirmAcceptTask} className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Informe ao solicitante quando prevê concluir esta tarefa.
+            </p>
+            <Field label="Data prevista para conclusão *">
+              <input 
+                type="date" 
+                value={resolutionDate} 
+                onChange={(e) => setResolutionDate(e.target.value)} 
+                className={inputCls} 
+                required 
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setAcceptingTask(null)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+              <button type="submit" disabled={togglingId === acceptingTask.id} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
+                {togglingId === acceptingTask.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />} 
+                Confirmar Aceite
               </button>
             </div>
           </form>
