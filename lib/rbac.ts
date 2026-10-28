@@ -1,13 +1,14 @@
 import type { SessionUser, Task, TaskStatus, UserRole } from "./types";
 
-export const ALL_ROLES: UserRole[] = ["admin", "manager", "member", "diretor"];
+// Adicionados os novos cargos usados no sistema para liberar o acesso
+export const ALL_ROLES: UserRole[] = ["admin", "manager", "member", "diretor", "analista", "gerente", "colaborador"];
 
 /** Rotas acessíveis sem sessão. */
 export const PUBLIC_ROUTES = ["/login", "/auth"];
 
 /** Mapa de rotas protegidas → cargos permitidos (verificado no middleware). */
 export const ROUTE_ACCESS: { prefix: string; roles: UserRole[] }[] = [
-  { prefix: "/usuarios", roles: ["admin"] },
+  { prefix: "/usuarios", roles: ["admin", "diretor", "gerente"] },
   { prefix: "/checklist", roles: ALL_ROLES },
 ];
 
@@ -30,11 +31,11 @@ export function canAccessRoute(role: UserRole, pathname: string) {
  * Serve para UX (esconder/desabilitar ações) — o banco é a fonte da verdade.
  */
 export const can = {
-  manageUsers: (u: SessionUser) => u.role === "admin",
-  createProject: (u: SessionUser) => u.role === "admin" || u.role === "manager",
+  manageUsers: (u: SessionUser) => u.role === "admin" || u.role === "diretor",
+  createProject: (u: SessionUser) => u.role === "admin" || u.role === "manager" || u.role === "gerente" || u.role === "diretor",
   manageProject: (u: SessionUser, project: { created_by: string | null } | null | undefined) =>
-    u.role === "admin" || (u.role === "manager" && !!project && project.created_by === u.id),
-  viewTeamReports: (u: SessionUser) => u.role === "admin" || u.role === "manager",
+    u.role === "admin" || u.role === "diretor" || (["manager", "gerente"].includes(u.role) && !!project && project.created_by === u.id),
+  viewTeamReports: (u: SessionUser) => ["admin", "manager", "gerente", "diretor", "analista"].includes(u.role),
 };
 
 /** Status para os quais o usuário pode mover a tarefa. */

@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "manager" | "member" | "diretor" | "analista" | "gerente";
+export type UserRole = "admin" | "manager" | "member" | "diretor" | "analista" | "gerente" | "colaborador";
 export type ProjectStatus = "planejamento" | "em_andamento" | "pausado" | "concluido";
 export type TaskStatus = "backlog" | "todo" | "in_progress" | "in_review" | "done";
 export type TaskPriority = "baixa" | "media" | "alta" | "urgente";
