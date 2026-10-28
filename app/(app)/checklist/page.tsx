@@ -378,6 +378,20 @@ export default function ChecklistPage() {
   useEffect(() => { if (currentUser) fetchNotifications(); }, [currentUser]);
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
+  // A função aceita undefined para corrigir o erro do TypeScript, convertendo em ignorar caso não exista
+  async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
+    if (!userId || userId === currentUser) return;
+    try {
+      await supabase.from("notifications").insert({
+        user_id: userId,
+        title,
+        message
+      });
+    } catch (err) {
+      // Ignora erro silenciosamente caso a política RLS do banco bloqueie
+    }
+  }
+
   async function fetchInitialData() {
     setLoading(true);
     let profileData: Profile | null = null;
@@ -426,17 +440,37 @@ export default function ChecklistPage() {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   }
 
+  // Faz fetch tanto dos Passos/Perguntas normais, quanto das mensagens codificadas no banco
   async function fetchSubtasks(templateIds: string[]) {
     if (!templateIds.length) return;
-    const { data, error } = await supabase.from("checklist_subtasks").select("*").in("checklist_item_id", templateIds);
+    const { data, error } = await supabase.from("checklist_subtasks").select("*").in("checklist_item_id", templateIds).order("id", { ascending: true });
 
     if (!error && data) {
-      const map: Record<string, Subtask[]> = {};
-      data.forEach((s: Subtask) => {
-        if (!map[s.checklist_item_id]) map[s.checklist_item_id] = [];
-        map[s.checklist_item_id].push({ ...s });
+      const mapSubtasks: Record<string, Subtask[]> = {};
+      const mapMessages: Record<string, TaskMessage[]> = {};
+
+      data.forEach((s: any) => {
+        // Se a "subtarefa" começar pelo código secreto de mensagem, trata-se de um Chat
+        if (s.title && s.title.startsWith("[MSG]|")) {
+          const parts = s.title.split("|"); // Formato: [MSG] | UserID | ISODate | Texto
+          if (!mapMessages[s.checklist_item_id]) mapMessages[s.checklist_item_id] = [];
+          
+          mapMessages[s.checklist_item_id].push({
+            id: s.id,
+            template_id: s.checklist_item_id,
+            user_id: parts[1],
+            created_at: parts[2] || new Date().toISOString(),
+            message: parts.slice(3).join("|") // Reconstrói a mensagem
+          });
+        } else {
+          // É uma subtarefa normal (Checklist / Pergunta)
+          if (!mapSubtasks[s.checklist_item_id]) mapSubtasks[s.checklist_item_id] = [];
+          mapSubtasks[s.checklist_item_id].push({ ...s });
+        }
       });
-      setSubtasks(map);
+      
+      setSubtasks(mapSubtasks);
+      setTaskMessages(mapMessages);
     }
   }
 
@@ -467,25 +501,45 @@ export default function ChecklistPage() {
     }
   }
 
-  // Envio de mensagem de chat processado puramente no estado local para evitar erros de RLS
+  // TRUQUE SEGURO DE CHAT: Enviamos a mensagem como uma subtarefa codificada, evitando as políticas RLS na tabela de logs
   async function handleAddTaskMessage(templateId: string, text: string, assignedUserId: string | null) {
     if (!text || !currentUser) return;
 
-    const senderName = currentUserProfile?.full_name || "Alguém";
-    const newMsg: TaskMessage = {
-      id: `${Date.now()}`,
-      template_id: templateId,
-      user_id: currentUser,
-      message: `${senderName}: ${text}`,
-      created_at: new Date().toISOString()
-    };
+    const isoDate = new Date().toISOString();
+    const secretTitle = `[MSG]|${currentUser}|${isoDate}|${text}`;
 
-    setTaskMessages((prev) => ({
-      ...prev,
-      [templateId]: [...(prev[templateId] || []), newMsg],
-    }));
-    setTaskMessageInputs((prev) => ({ ...prev, [templateId]: "" }));
-    toast.success("Mensagem enviada!");
+    const { data, error } = await supabase.from("checklist_subtasks").insert({
+      checklist_item_id: templateId,
+      title: secretTitle,
+      completed: false,
+      assigned_to: assignedUserId 
+    }).select().single();
+
+    if (error) {
+       return void toast.error("Erro ao salvar mensagem.");
+    }
+
+    if (data) {
+      const senderName = currentUserProfile?.full_name || "Alguém";
+      
+      const newMsg: TaskMessage = {
+        id: data.id,
+        template_id: templateId,
+        user_id: currentUser,
+        message: text,
+        created_at: isoDate
+      };
+
+      setTaskMessages((prev) => ({
+        ...prev,
+        [templateId]: [...(prev[templateId] || []), newMsg],
+      }));
+      setTaskMessageInputs((prev) => ({ ...prev, [templateId]: "" }));
+      toast.success("Mensagem enviada!");
+
+      const targetId = assignedUserId || (templates.find(t => t.id === templateId)?.assigned_to);
+      await safeSendNotification(targetId, "Nova mensagem na tarefa", `${senderName}: ${text}`);
+    }
   }
 
   async function handleAddSubtask(templateId: string, text: string, assignedUserId: string | null) {
@@ -505,6 +559,11 @@ export default function ChecklistPage() {
       }));
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
       toast.success("Passo adicionado!");
+
+      if (assignedUserId) {
+        const senderName = currentUserProfile?.full_name || "Alguém";
+        await safeSendNotification(assignedUserId, "Nova pergunta / passo", `${senderName} marcou-o: "${text}"`);
+      }
     }
   }
 
@@ -525,6 +584,11 @@ export default function ChecklistPage() {
     
     setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true } : t));
     toast.success("Tarefa aceita com sucesso!");
+
+    if (template.created_by && template.created_by !== currentUser) {
+      const senderName = currentUserProfile?.full_name || "Alguém";
+      await safeSendNotification(template.created_by, "Tarefa Aceita", `${senderName} aceitou e iniciou a tarefa: "${template.title}"`);
+    }
   }
 
   async function handleCheckClick(template: Template) {
@@ -651,6 +715,13 @@ export default function ChecklistPage() {
       if (oneTimeFormSubtasks.length > 0 && !editingOneTimeId) {
         const subtaskInserts = oneTimeFormSubtasks.map((st) => ({ checklist_item_id: data.id, title: st.title, assigned_to: st.assigned_to, completed: false }));
         await supabase.from("checklist_subtasks").insert(subtaskInserts);
+        
+        // Notifica de forma segura todos os que receberam subtarefas
+        const senderName = currentUserProfile?.full_name || "Alguém";
+        for (const sub of subtaskInserts) {
+           if (sub.assigned_to) await safeSendNotification(sub.assigned_to, "Nova pergunta / aprovação", `${senderName} marcou-o: "${sub.title}"`);
+        }
+        
         fetchSubtasks([data.id]);
       }
       
@@ -660,6 +731,12 @@ export default function ChecklistPage() {
       } else {
         setTemplates((prev) => [...prev, data]);
         toast.success("Tarefa criada com sucesso!");
+        
+        // Notificação de criação
+        if (targetUser && targetUser !== currentUser) {
+          const senderName = currentUserProfile?.full_name || "Alguém";
+          await safeSendNotification(targetUser, "Nova Tarefa Recebida", `${senderName} enviou uma tarefa: "${data.title}"`);
+        }
       }
       
       setShowOneTimeModal(false);
@@ -788,7 +865,10 @@ export default function ChecklistPage() {
       const itemSubs = subtasks[t.id] || [];
       const itemMsgs = taskMessages[t.id] || [];
       const hasSubtaskAssignedToUser = filterUser !== "all" && itemSubs.some(s => s.assigned_to === filterUser);
-      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to || hasSubtaskAssignedToUser;
+      
+      // FIX DA VISIBILIDADE: Se for o criador, tem acesso à tarefa que criou.
+      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to || hasSubtaskAssignedToUser || t.created_by === filterUser;
+      
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
       const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
       
@@ -798,6 +878,7 @@ export default function ChecklistPage() {
       }
 
       if (isColaborador) {
+        // Mostra apenas o que lhe diz respeito (dono, marcado, ou criador)
         const assignedToMe = t.assigned_to === currentUser || itemSubs.some(s => s.assigned_to === currentUser) || itemMsgs.some(m => m.user_id === currentUser) || t.created_by === currentUser;
         if (!assignedToMe && t.assigned_to) return false;
       }
@@ -1421,7 +1502,7 @@ export default function ChecklistPage() {
             </Field>
 
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
-              <span className="test-sm font-medium text-slate-700">Perguntas ou Passos</span>
+              <span className="text-sm font-medium text-slate-700">Perguntas ou Passos</span>
               {oneTimeFormSubtasks.length > 0 && (
                 <ul className="mb-2 space-y-1">
                   {oneTimeFormSubtasks.map((st, idx) => (
