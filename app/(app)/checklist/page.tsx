@@ -387,8 +387,8 @@ export default function ChecklistPage() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<Template | null>(null);
 
-  const userRole = currentUserProfile?.role ?? "member";
-  const isColaborador = userRole === "member";
+  const userRole = currentUserProfile?.role ?? "colaborador";
+  const isColaborador = userRole === "colaborador" || userRole === "member";
   const isDiretor = userRole === "diretor";
   const isGerente = userRole === "gerente";
   const isAnalista = userRole === "analista";
@@ -446,7 +446,8 @@ export default function ChecklistPage() {
         profileData = myProfile;
         setCurrentUserProfile(myProfile);
         setFilterUser(myProfile.id);
-        if (myProfile.role === "member" && myProfile.empresas?.length === 1) {
+        const myRole = myProfile.role ?? "colaborador";
+        if ((myRole === "colaborador" || myRole === "member") && myProfile.empresas?.length === 1) {
            setFilterEmpresa(myProfile.empresas[0]);
         }
       }
@@ -456,7 +457,8 @@ export default function ChecklistPage() {
     if (profilesData) setUsers(profilesData);
 
     let query = supabase.from("daily_checklist_templates").select("*").order("created_at", { ascending: true });
-    if (profileData?.role === "member" && profileData.empresas?.length) {
+    const myRole = profileData?.role ?? "colaborador";
+    if ((myRole === "colaborador" || myRole === "member") && profileData?.empresas?.length) {
       query = query.in("empresa", profileData.empresas);
     }
     const { data: tmpls, error } = await query;
