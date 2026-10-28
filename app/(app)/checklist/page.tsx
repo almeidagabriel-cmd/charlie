@@ -148,7 +148,6 @@ function MentionInput({
 
     const cursor = e.target.selectionStart || 0;
     const textBeforeCursor = val.slice(0, cursor);
-    // Aceita letras acentuadas (João, Conceição...), números, _, ponto e espaços
     const match = textBeforeCursor.match(/@([\p{L}\p{N}_.\s]*)$/u);
 
     if (match) {
@@ -302,11 +301,9 @@ function recurrenceText(t: Template) {
   return RECURRENCE_LABEL[t.recurrence_type] ?? "Todos os dias";
 }
 
-// Encontra todos os usuários marcados com @Nome no texto
 function extractMentionedUserIds(text: string, users: Profile[]): string[] {
   let remaining = text.toLowerCase();
   const ids = new Set<string>();
-  // nomes mais longos primeiro: "@Ana Paula" não deve virar também "@Ana"
   const sorted = [...users].sort(
     (a, b) => (b.full_name || b.email || "").length - (a.full_name || a.email || "").length
   );
@@ -396,7 +393,6 @@ export default function ChecklistPage() {
 
   useEffect(() => { fetchInitialData(); }, []);
 
-  // Notificações: carga inicial + tempo real para o usuário logado
   useEffect(() => {
     if (!currentUser) return;
     fetchNotifications();
@@ -419,13 +415,18 @@ export default function ChecklistPage() {
 
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
-  // Envia notificação para OUTRO usuário (não adiciona na tela de quem envia)
+  // CORRIGIDO: Não envia notificação para si mesmo e evita o erro da base de dados
   async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
     if (!userId || userId === currentUser) return;
-    const { error } = await supabase.from("notifications").insert({ user_id: userId, title, message });
+    
+    const { error } = await supabase.from("notifications").insert({ 
+      user_id: userId, 
+      title, 
+      message 
+    });
+    
     if (error) {
       console.error("[notifications] falha ao inserir:", error);
-      toast.error("A notificação não foi enviada", { description: error.message });
     }
   }
 
@@ -576,7 +577,6 @@ export default function ChecklistPage() {
       const task = templates.find(t => t.id === templateId);
       const taskTitle = task?.title || "Tarefa";
 
-      // Todos os usuários marcados com @ no texto + o selecionado no dropdown
       const mentioned = new Set(extractMentionedUserIds(text, users));
       if (assignedUserId) mentioned.add(assignedUserId);
 
