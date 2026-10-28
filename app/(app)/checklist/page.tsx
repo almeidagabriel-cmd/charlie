@@ -850,7 +850,8 @@ export default function ChecklistPage() {
 
     setIsSavingTask(true);
 
-    const targetUser = isColaborador ? currentUser : (oneTimeAssignedTo || null);
+    // Permitido a qualquer colaborador definir o responsável (oneTimeAssignedTo)
+    const targetUser = oneTimeAssignedTo || null;
     const payload = {
       title: oneTimeTitle, 
       description: oneTimeDesc, 
@@ -1076,7 +1077,7 @@ export default function ChecklistPage() {
   const totalCount = currentTabBaseTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
-  // --- Novo Relatório de RH Individualizado e Completo ---
+  // --- Relatório de RH Individualizado e Completo ---
   const detailedHrReport = useMemo(() => {
     const rows: Array<{
       id: string;
@@ -1770,7 +1771,7 @@ export default function ChecklistPage() {
         </Modal>
       )}
 
-      {/* Modal Nova Tarefa Extra (ou Edição) com Proteção contra Duplo Clique */}
+      {/* Modal Nova Tarefa Extra (ou Edição) com Permissão de Escolha de Responsável */}
       {showOneTimeModal && (
         <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
           <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
@@ -1781,16 +1782,14 @@ export default function ChecklistPage() {
             <Field label="Título *"><input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} placeholder="Ex: Orçamento confraternização" /></Field>
             <Field label="Descrição / Detalhes"><textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} placeholder="Descreva os valores..." /></Field>
             
-            <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
+            <div className="grid grid-cols-2 gap-3">
               <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-              {isPrivileged && (
-                <Field label="Responsável">
-                  <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
-                    <option value="">Equipe (Sem dono)</option>
-                    {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
-                  </select>
-                </Field>
-              )}
+              <Field label="Responsável">
+                <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
+                  <option value="">Equipe (Sem dono)</option>
+                  {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+                </select>
+              </Field>
             </div>
 
             <Field label="Prazo (Data de Execução)">
