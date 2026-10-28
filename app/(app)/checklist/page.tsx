@@ -43,7 +43,7 @@ interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
-  role: string;
+  role: string; // Ex: 'admin', 'diretor', 'gestor', 'member'
   empresas?: string[] | null;
 }
 
@@ -366,7 +366,10 @@ export default function ChecklistPage() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<Template | null>(null);
 
-  const isColaborador = (currentUserProfile?.role ?? "member") === "member";
+  const userRole = currentUserProfile?.role ?? "member";
+  const isColaborador = userRole === "member";
+  const isDiretor = userRole === "diretor";
+  const isAdmin = userRole === "admin"; // Se houver perfil admin completo
 
   useEffect(() => { fetchInitialData(); }, []);
   useEffect(() => { if (currentUser) fetchNotifications(); }, [currentUser]);
@@ -777,8 +780,28 @@ export default function ChecklistPage() {
     return u?.full_name || u?.email || "—";
   };
 
+  // Filtragem de utilizadores visíveis de acordo com a regra de Diretor
+  const visibleUsers = useMemo(() => {
+    return users.filter(u => {
+      // Se quem está logado for Diretor
+      if (isDiretor) {
+        // Não pode ver outros diretores (exceto ele próprio)
+        if (u.role === "diretor" && u.id !== currentUser) return false;
+      }
+      return true;
+    });
+  }, [users, isDiretor, currentUser]);
+
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
+      // Restrições de Diretor para templates atribuídos a outros diretores
+      if (isDiretor && t.assigned_to) {
+        const assignedUser = users.find(u => u.id === t.assigned_to);
+        if (assignedUser?.role === "diretor" && t.assigned_to !== currentUser) {
+          return false;
+        }
+      }
+
       if (t.is_one_time) {
         if (oneTimeDoneBefore.has(t.id)) return false;
         return true;
@@ -793,7 +816,7 @@ export default function ChecklistPage() {
       }
       return false;
     });
-  }, [templates, startDate, endDate, oneTimeDoneBefore]);
+  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, users, currentUser]);
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
@@ -804,6 +827,7 @@ export default function ChecklistPage() {
       const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to || hasSubtaskAssignedToUser;
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
       const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
+      
       let hasAccessToEmpresa = true;
       if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
         hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) || t.empresa === "Todas / Grupo B&A" : true;
@@ -830,17 +854,25 @@ export default function ChecklistPage() {
   const totalCount = currentTabTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
+  // Acompanhamento restringe os utilizadores visíveis para diretores
   const report = useMemo(() => {
-    const rows = new Map<string, { id: string | null; total: number; done: number; pending: Template[] }>();
-    visibleTasks.forEach((t) => {
-      const key = t.assigned_to ?? "__team";
-      const row = rows.get(key) ?? { id: t.assigned_to, total: 0, done: 0, pending: [] };
-      row.total += 1;
-      if (isDone(t)) row.done += 1; else row.pending.push(t);
-      rows.set(key, row);
+    const targetUsersForReport = visibleUsers;
+    const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
+
+    targetUsersForReport.forEach(u => {
+      const userTasks = visibleTasks.filter(t => t.assigned_to === u.id);
+      let done = 0;
+      userTasks.forEach(t => { if (isDone(t)) done++; });
+      rows.push({
+        id: u.id,
+        total: userTasks.length,
+        done: done,
+        pending: userTasks.filter(t => !isDone(t))
+      });
     });
-    return Array.from(rows.values()).sort((a, b) => b.total - a.total);
-  }, [visibleTasks, logs]);
+
+    return rows.sort((a, b) => b.total - a.total);
+  }, [visibleUsers, visibleTasks, logs]);
 
   const manageList = useMemo(() => {
     let filtered = templates.filter((t) => !t.is_one_time);
@@ -938,9 +970,10 @@ export default function ChecklistPage() {
           {!isColaborador && (
             <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
               <Filter className="h-4 w-4 text-slate-500" />
+              {/* Filtro de usuários restrito para diretores (oculta outros diretores) */}
               <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="bg-transparent outline-none max-w-[120px] truncate">
                 <option value="all">Todos usuários</option>
-                {users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+                {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
               </select>
             </label>
           )}
@@ -1074,7 +1107,6 @@ export default function ChecklistPage() {
                                         <li key={sub.id} className="rounded-lg bg-white p-3 border border-slate-200 shadow-sm">
                                           <div className="flex items-start justify-between gap-2">
                                             <label className="flex items-start gap-2 cursor-pointer select-none flex-1">
-                                              {/* CORREÇÃO AQUI: Uso de dupla negação (!!) para garantir booleano */}
                                               <input 
                                                 type="checkbox" 
                                                 disabled={!!(requiresAcceptance && !canAccept)} 
@@ -1307,7 +1339,14 @@ export default function ChecklistPage() {
             
             <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
               <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-              {!isColaborador && <Field label="Responsável"><select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}><option value="">Equipe (Sem dono)</option>{users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>}
+              {!isColaborador && (
+                <Field label="Responsável">
+                  <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
+                    <option value="">Equipe (Sem dono)</option>
+                    {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+                  </select>
+                </Field>
+              )}
             </div>
 
             <Field label="Prazo (Data de Execução)">
@@ -1339,7 +1378,7 @@ export default function ChecklistPage() {
                      setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
                      setOneTimeSubInput("");
                    }}
-                   users={users}
+                   users={visibleUsers}
                    placeholder="Escreva e use @ para direcionar..."
                 />
               )}
