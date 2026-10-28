@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "manager" | "member" | "diretor";
+export type UserRole = "admin" | "manager" | "member" | "diretor" | "analista" | "gerente";
 export type ProjectStatus = "planejamento" | "em_andamento" | "pausado" | "concluido";
 export type TaskStatus = "backlog" | "todo" | "in_progress" | "in_review" | "done";
 export type TaskPriority = "baixa" | "media" | "alta" | "urgente";
@@ -9,7 +9,7 @@ export interface Profile {
   full_name: string | null;
   role: UserRole;
   department: string | null;
-  empresas?: string[] | null; // <--- Adicione esta linha
+  empresas?: string[] | null;
   avatar_url: string | null;
   is_active: boolean;
   created_at: string;
