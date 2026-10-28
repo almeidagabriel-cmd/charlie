@@ -17,10 +17,12 @@ const ROLE_CLASS: Record<UserRole, string> = {
   admin: "bg-purple-100 text-purple-800 border-purple-200",
   manager: "bg-indigo-100 text-indigo-800 border-indigo-200",
   member: "bg-slate-100 text-slate-700 border-slate-200",
-  diretor: "bg-amber-100 text-amber-800 border-amber-200",
-  gerente: "bg-blue-100 text-blue-800 border-blue-200",      // <--- Adicione esta linha
-  analista: "bg-emerald-100 text-emerald-800 border-emerald-200", // <--- Adicione esta linha
-};
+  diretor: "bg-blue-100 text-blue-800 border-blue-200",
+  // Adicione as novas linhas abaixo:
+  gerente: "bg-indigo-100 text-indigo-800 border-indigo-200", 
+  analista: "bg-cyan-100 text-cyan-800 border-cyan-200",
+  colaborador: "bg-slate-100 text-slate-700 border-slate-200",
+}
  
 
 export function RoleBadge({ role }: { role: UserRole }) {
