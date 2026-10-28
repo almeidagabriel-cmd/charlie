@@ -1,12 +1,23 @@
-export const ROLES = ["admin", "manager", "member", "diretor", "analista", "gerente"] as const;
+import type { UserRole } from "./types";
 
-export const ROLE_LABEL: Record<string, string> = {
-  admin: "Administrador",
+export const ROLES: UserRole[] = [
+  "admin", 
+  "manager", 
+  "member", 
+  "diretor", 
+  "gerente", 
+  "analista", 
+  "colaborador"
+];
+
+export const ROLE_LABEL: Record<UserRole, string> = {
+  admin: "Administrador (TI)",
   manager: "Gestor",
-  member: "Colaborador",
+  member: "Membro",
   diretor: "Diretor",
-  analista: "Analista",
   gerente: "Gerente",
+  analista: "Analista",
+  colaborador: "Colaborador",
 };
 
 export const PRIORITY_CONFIG: Record<string, { label: string; className: string }> = {
