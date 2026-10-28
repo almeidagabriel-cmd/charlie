@@ -43,7 +43,7 @@ interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
-  role: string; // Ex: 'admin', 'diretor', 'gestor', 'member'
+  role: string;
   empresas?: string[] | null;
 }
 
@@ -320,7 +320,9 @@ export default function ChecklistPage() {
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [hideCompleted, setHideCompleted] = useState(false);
+  
+  // ALTERADO AQUI: Definido como true para ocultar as concluídas por padrão ao entrar
+  const [hideCompleted, setHideCompleted] = useState(true);
   
   const [startDate, setStartDate] = useState(todayLocal());
   const [endDate, setEndDate] = useState(todayLocal());
@@ -369,7 +371,6 @@ export default function ChecklistPage() {
   const userRole = currentUserProfile?.role ?? "member";
   const isColaborador = userRole === "member";
   const isDiretor = userRole === "diretor";
-  const isAdmin = userRole === "admin"; // Se houver perfil admin completo
 
   useEffect(() => { fetchInitialData(); }, []);
   useEffect(() => { if (currentUser) fetchNotifications(); }, [currentUser]);
@@ -780,12 +781,9 @@ export default function ChecklistPage() {
     return u?.full_name || u?.email || "—";
   };
 
-  // Filtragem de utilizadores visíveis de acordo com a regra de Diretor
   const visibleUsers = useMemo(() => {
     return users.filter(u => {
-      // Se quem está logado for Diretor
       if (isDiretor) {
-        // Não pode ver outros diretores (exceto ele próprio)
         if (u.role === "diretor" && u.id !== currentUser) return false;
       }
       return true;
@@ -794,7 +792,6 @@ export default function ChecklistPage() {
 
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
-      // Restrições de Diretor para templates atribuídos a outros diretores
       if (isDiretor && t.assigned_to) {
         const assignedUser = users.find(u => u.id === t.assigned_to);
         if (assignedUser?.role === "diretor" && t.assigned_to !== currentUser) {
@@ -854,7 +851,6 @@ export default function ChecklistPage() {
   const totalCount = currentTabTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
-  // Acompanhamento restringe os utilizadores visíveis para diretores
   const report = useMemo(() => {
     const targetUsersForReport = visibleUsers;
     const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
@@ -970,7 +966,6 @@ export default function ChecklistPage() {
           {!isColaborador && (
             <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
               <Filter className="h-4 w-4 text-slate-500" />
-              {/* Filtro de usuários restrito para diretores (oculta outros diretores) */}
               <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="bg-transparent outline-none max-w-[120px] truncate">
                 <option value="all">Todos usuários</option>
                 {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
