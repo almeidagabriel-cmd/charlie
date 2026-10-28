@@ -850,7 +850,6 @@ export default function ChecklistPage() {
 
     setIsSavingTask(true);
 
-    // Permitido a qualquer colaborador definir o responsável (oneTimeAssignedTo)
     const targetUser = oneTimeAssignedTo || null;
     const payload = {
       title: oneTimeTitle, 
@@ -1026,7 +1025,6 @@ export default function ChecklistPage() {
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
-  // Filtro base para a lista (respeita utilizador, empresa e setor)
   const baseFilteredTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
@@ -1052,7 +1050,6 @@ export default function ChecklistPage() {
     });
   }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, currentUser]);
 
-  // Lista visível na tela (aplica o filtro de ocultar concluídas apenas aqui)
   const visibleTasks = useMemo(() => {
     return baseFilteredTasks.filter((t) => !hideCompleted || !isDone(t));
   }, [baseFilteredTasks, hideCompleted, logs]);
@@ -1071,13 +1068,11 @@ export default function ChecklistPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [currentTabTasks]);
 
-  // Cálculo correto do progresso baseado em todas as tarefas do filtro (baseFilteredTasks), ignorando o ocultar concluídas
   const currentTabBaseTasks = activeTab === "daily" ? baseFilteredTasks.filter(t => !t.is_one_time) : activeTab === "tasks" ? baseFilteredTasks.filter(t => t.is_one_time) : [];
   const doneCount = currentTabBaseTasks.filter(isDone).length;
   const totalCount = currentTabBaseTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
-  // --- Relatório de RH Individualizado e Completo ---
   const detailedHrReport = useMemo(() => {
     const rows: Array<{
       id: string;
@@ -1434,7 +1429,6 @@ export default function ChecklistPage() {
 
                             {isExpanded && (
                               <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
-                                {/* Seção 1: Passos e Perguntas Operacionais (Checklist) */}
                                 <div>
                                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Perguntas e Passos da Tarefa</p>
                                   {itemSubtasks.length === 0 ? (
@@ -1477,7 +1471,6 @@ export default function ChecklistPage() {
                                   </div>
                                 </div>
 
-                                {/* Seção 2: Chat Geral / Histórico de Mensagens */}
                                 <div className="pt-4 border-t border-slate-200">
                                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
                                   {itemMsgs.length === 0 ? (
@@ -1670,11 +1663,52 @@ export default function ChecklistPage() {
               <Field label="Categoria"><select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
               <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
             </div>
+            
             <Field label="Recorrência">
               <select value={newRecurrenceType} onChange={(e) => setNewRecurrenceType(e.target.value as RecurrenceType)} className={inputCls}>
                 {(Object.keys(RECURRENCE_LABEL) as RecurrenceType[]).map((r) => <option key={r} value={r}>{RECURRENCE_LABEL[r]}</option>)}
               </select>
             </Field>
+
+            {/* Bloco de Dias Específicos */}
+            {newRecurrenceType === "custom" && (
+              <div className="space-y-1.5">
+                <span className="text-sm font-medium text-slate-700">Selecione os dias da semana</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {DAYS_OF_WEEK.map((d) => {
+                    const selected = newCustomDays.includes(d.value);
+                    return (
+                      <button
+                        key={d.value}
+                        type="button"
+                        onClick={() => handleToggleCustomDay(d.value)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${
+                          selected 
+                            ? "bg-primary text-white border-primary" 
+                            : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Bloco de Recorrência Mensal */}
+            {newRecurrenceType === "monthly" && (
+              <Field label="Dia do mês">
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="31" 
+                  value={newRecurrenceDay} 
+                  onChange={(e) => setNewRecurrenceDay(Number(e.target.value))} 
+                  className={inputCls} 
+                />
+              </Field>
+            )}
 
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
               <span className="text-sm font-medium text-slate-700">Subtarefas Padrão</span>
