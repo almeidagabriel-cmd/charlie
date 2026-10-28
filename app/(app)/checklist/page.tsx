@@ -83,28 +83,19 @@ interface Log {
   photo_url?: string | null;
 }
 
-interface SubtaskComment {
-  id: string;
-  subtask_id: string;
-  user_id: string;
-  comment: string;
-  created_at: string;
-}
-
 interface Subtask {
   id: string;
   checklist_item_id: string;
   title: string;
   completed: boolean;
   assigned_to?: string | null;
-  comments?: SubtaskComment[];
 }
 
-interface TaskGeneralMessage {
+interface TaskMessage {
   id: string;
-  checklist_item_id: string;
+  template_id: string;
   user_id: string;
-  comment: string;
+  message: string;
   created_at: string;
 }
 
@@ -317,7 +308,7 @@ export default function ChecklistPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [logs, setLogs] = useState<Record<string, Log>>({});
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({});
-  const [taskMessages, setTaskMessages] = useState<Record<string, TaskGeneralMessage[]>>({});
+  const [taskMessages, setTaskMessages] = useState<Record<string, TaskMessage[]>>({});
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   
   const [newSubtaskTexts, setNewSubtaskTexts] = useState<Record<string, string>>({});
@@ -450,24 +441,28 @@ export default function ChecklistPage() {
     }
   }
 
-  // Buscamos as mensagens gerais usando a tabela de comentários de subtarefa existente (vinculando a um subtask ID fictício ou usando a tabela de notificações/comentários se houver, ou armazenando de forma segura)
+  // Buscamos as mensagens de chat armazenadas na tabela de notificações como log de chat ou simuladas em memória/notificações
   async function fetchTaskMessages(templateIds: string[]) {
     if (!templateIds.length) return;
-    // Como alternativa sem criar tabela nova no banco, buscamos comentários gerais salvos vinculados à tarefa
-    const { data, error } = await supabase.from("checklist_subtask_comments").select("*").in("subtask_id", templateIds).order("created_at", { ascending: true });
-
-    if (!error && data) {
-      const map: Record<string, TaskGeneralMessage[]> = {};
-      data.forEach((c: any) => {
-        const tid = c.subtask_id; // reutilizando subtask_id para armazenar o template id de forma segura
-        if (!map[tid]) map[tid] = [];
-        map[tid].push({
-          id: c.id,
-          checklist_item_id: tid,
-          user_id: c.user_id,
-          comment: c.comment,
-          created_at: c.created_at
-        });
+    // Buscamos notificações direcionadas a este chat ou usamos uma tabela segura se existir. Como alternativa robusta sem erro, buscamos na tabela de notificações com título específico de chat
+    const { data } = await supabase.from("notifications").select("*").order("created_at", { ascending: true });
+    if (data) {
+      const map: Record<string, TaskMessage[]> = {};
+      data.forEach((n: any) => {
+        // Se a notificação for do tipo chat de tarefa
+        if (n.title && n.title.includes("Mensagem na Tarefa:")) {
+          const tid = n.title.split("Mensagem na Tarefa:")[1]?.trim();
+          if (tid) {
+            if (!map[tid]) map[tid] = [];
+            map[tid].push({
+              id: n.id,
+              template_id: tid,
+              user_id: n.user_id, // ou remetente
+              message: n.message,
+              created_at: n.created_at
+            });
+          }
+        }
       });
       setTaskMessages(map);
     }
@@ -503,21 +498,26 @@ export default function ChecklistPage() {
   async function handleAddTaskMessage(templateId: string, text: string, assignedUserId: string | null) {
     if (!text || !currentUser) return;
 
-    // Salvamos na tabela de comentários usando o templateId como subtask_id para aproveitar a tabela existente do banco sem precisar criar novas tabelas
-    const { data, error } = await supabase.from("checklist_subtask_comments").insert({
-      subtask_id: templateId,
-      user_id: currentUser,
-      comment: text,
+    const targetUserId = assignedUserId || (templates.find(t => t.id === templateId)?.assigned_to) || currentUser;
+    const senderName = currentUserProfile?.full_name || "Alguém";
+
+    // Gravamos na tabela de notificações de forma segura para servir como histórico persistente do chat da tarefa sem precisar de tabelas novas
+    const { data, error } = await supabase.from("notifications").insert({
+      user_id: targetUserId,
+      title: `Mensagem na Tarefa: ${templateId}`,
+      message: `${senderName}: ${text}`,
     }).select().single();
 
-    if (error) return void toast.error("Erro ao enviar mensagem");
+    if (error) {
+      return void toast.error("Erro ao enviar mensagem", { description: error.message });
+    }
 
     if (data) {
-      const newMsg: TaskGeneralMessage = {
+      const newMsg: TaskMessage = {
         id: data.id,
-        checklist_item_id: templateId,
+        template_id: templateId,
         user_id: currentUser,
-        comment: text,
+        message: `${senderName}: ${text}`,
         created_at: data.created_at
       };
 
@@ -526,17 +526,7 @@ export default function ChecklistPage() {
         [templateId]: [...(prev[templateId] || []), newMsg],
       }));
       setTaskMessageInputs((prev) => ({ ...prev, [templateId]: "" }));
-
-      const targetUserId = assignedUserId || (templates.find(t => t.id === templateId)?.assigned_to);
-      if (targetUserId && targetUserId !== currentUser) {
-        const senderName = currentUserProfile?.full_name || "Alguém";
-        await supabase.from("notifications").insert({
-          user_id: targetUserId,
-          title: "Nova mensagem na tarefa",
-          message: `${senderName} comentou: "${text}"`,
-        });
-        fetchNotifications();
-      }
+      fetchNotifications();
       toast.success("Mensagem enviada!");
     }
   }
@@ -1228,7 +1218,7 @@ export default function ChecklistPage() {
                                   </div>
                                 </div>
 
-                                {/* Seção 2: Chat Geral / Histórico de Mensagens (Sem vistar subtarefa) */}
+                                {/* Seção 2: Chat Geral / Histórico de Mensagens */}
                                 <div className="pt-4 border-t border-slate-200">
                                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
                                   {itemMsgs.length === 0 ? (
@@ -1248,9 +1238,9 @@ export default function ChecklistPage() {
                                           <p className="text-slate-700 whitespace-pre-wrap pl-4">
                                             {(() => {
                                               const names = users.map(u => u.full_name || u.email).filter(Boolean);
-                                              if (names.length === 0) return msg.comment;
+                                              if (names.length === 0) return msg.message;
                                               const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
-                                              return msg.comment.split(regex).map((part, i) => 
+                                              return msg.message.split(regex).map((part, i) => 
                                                 part.match(regex) ? (
                                                   <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
                                                     {part}
