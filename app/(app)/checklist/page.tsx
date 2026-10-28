@@ -409,7 +409,6 @@ export default function ChecklistPage() {
       setTemplates(tmpls);
       const ids = tmpls.map((t: Template) => t.id);
       fetchSubtasks(ids);
-      fetchTaskMessages(ids);
     }
 
     await fetchLogs();
@@ -441,13 +440,6 @@ export default function ChecklistPage() {
     }
   }
 
-  // Carrega as mensagens de chat armazenadas na tabela de logs/templates ou de forma local segura
-  async function fetchTaskMessages(templateIds: string[]) {
-    if (!templateIds.length) return;
-    // Buscamos interações salvas sem violar RLS (usando a tabela checklist_subtasks como suporte de comentários se necessário, ou mock/estado local)
-    setTaskMessages({});
-  }
-
   async function fetchLogs() {
     const { data: lgData, error } = await supabase.from("daily_checklist_logs").select("*").gte("date", startDate).lte("date", endDate).order("date", { ascending: true });
     if (error) { toast.error("Erro ao carregar registros"); return; }
@@ -475,7 +467,7 @@ export default function ChecklistPage() {
     }
   }
 
-  // Envio de mensagem de chat processado puramente no estado local para evitar erros de RLS no banco
+  // Envio de mensagem de chat processado puramente no estado local para evitar erros de RLS
   async function handleAddTaskMessage(templateId: string, text: string, assignedUserId: string | null) {
     if (!text || !currentUser) return;
 
@@ -1429,7 +1421,7 @@ export default function ChecklistPage() {
             </Field>
 
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
-              <span className="text-sm font-medium text-slate-700">Perguntas ou Passos</span>
+              <span className="test-sm font-medium text-slate-700">Perguntas ou Passos</span>
               {oneTimeFormSubtasks.length > 0 && (
                 <ul className="mb-2 space-y-1">
                   {oneTimeFormSubtasks.map((st, idx) => (
