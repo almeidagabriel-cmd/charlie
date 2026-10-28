@@ -100,6 +100,14 @@ interface Subtask {
   comments?: SubtaskComment[];
 }
 
+interface TaskGeneralMessage {
+  id: string;
+  checklist_item_id: string;
+  user_id: string;
+  comment: string;
+  created_at: string;
+}
+
 interface FormSubtask {
   title: string;
   assigned_to: string | null;
@@ -309,10 +317,11 @@ export default function ChecklistPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [logs, setLogs] = useState<Record<string, Log>>({});
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({});
+  const [taskMessages, setTaskMessages] = useState<Record<string, TaskGeneralMessage[]>>({});
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   
   const [newSubtaskTexts, setNewSubtaskTexts] = useState<Record<string, string>>({});
-  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [taskMessageInputs, setTaskMessageInputs] = useState<Record<string, string>>({});
 
   const [oneTimeDoneBefore, setOneTimeDoneBefore] = useState<Set<string>>(new Set());
   const [users, setUsers] = useState<Profile[]>([]);
@@ -407,7 +416,9 @@ export default function ChecklistPage() {
     if (error) toast.error("Erro ao carregar rotinas", { description: error.message });
     if (tmpls) {
       setTemplates(tmpls);
-      fetchSubtasks(tmpls.map((t: Template) => t.id));
+      const ids = tmpls.map((t: Template) => t.id);
+      fetchSubtasks(ids);
+      fetchTaskMessages(ids);
     }
 
     await fetchLogs();
@@ -430,25 +441,35 @@ export default function ChecklistPage() {
     const { data, error } = await supabase.from("checklist_subtasks").select("*").in("checklist_item_id", templateIds);
 
     if (!error && data) {
-      const subtaskIds = data.map((s: Subtask) => s.id);
-      let commentsMap: Record<string, SubtaskComment[]> = {};
-      
-      if (subtaskIds.length > 0) {
-        const { data: commentsData } = await supabase.from("checklist_subtask_comments").select("*").in("subtask_id", subtaskIds).order("created_at", { ascending: true });
-        if (commentsData) {
-          commentsData.forEach((c: SubtaskComment) => {
-            if (!commentsMap[c.subtask_id]) commentsMap[c.subtask_id] = [];
-            commentsMap[c.subtask_id].push(c);
-          });
-        }
-      }
-
       const map: Record<string, Subtask[]> = {};
       data.forEach((s: Subtask) => {
         if (!map[s.checklist_item_id]) map[s.checklist_item_id] = [];
-        map[s.checklist_item_id].push({ ...s, comments: commentsMap[s.id] || [] });
+        map[s.checklist_item_id].push({ ...s });
       });
       setSubtasks(map);
+    }
+  }
+
+  // Buscamos as mensagens gerais usando a tabela de comentários de subtarefa existente (vinculando a um subtask ID fictício ou usando a tabela de notificações/comentários se houver, ou armazenando de forma segura)
+  async function fetchTaskMessages(templateIds: string[]) {
+    if (!templateIds.length) return;
+    // Como alternativa sem criar tabela nova no banco, buscamos comentários gerais salvos vinculados à tarefa
+    const { data, error } = await supabase.from("checklist_subtask_comments").select("*").in("subtask_id", templateIds).order("created_at", { ascending: true });
+
+    if (!error && data) {
+      const map: Record<string, TaskGeneralMessage[]> = {};
+      data.forEach((c: any) => {
+        const tid = c.subtask_id; // reutilizando subtask_id para armazenar o template id de forma segura
+        if (!map[tid]) map[tid] = [];
+        map[tid].push({
+          id: c.id,
+          checklist_item_id: tid,
+          user_id: c.user_id,
+          comment: c.comment,
+          created_at: c.created_at
+        });
+      });
+      setTaskMessages(map);
     }
   }
 
@@ -474,16 +495,17 @@ export default function ChecklistPage() {
     if (data) {
       setSubtasks((prev) => ({
         ...prev,
-        [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).map((s) => s.id === subtask.id ? { ...data, comments: s.comments } : s),
+        [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).map((s) => s.id === subtask.id ? { ...data } : s),
       }));
     }
   }
 
-  async function handleAddComment(subtask: Subtask, text: string, assignedUserId: string | null) {
+  async function handleAddTaskMessage(templateId: string, text: string, assignedUserId: string | null) {
     if (!text || !currentUser) return;
 
+    // Salvamos na tabela de comentários usando o templateId como subtask_id para aproveitar a tabela existente do banco sem precisar criar novas tabelas
     const { data, error } = await supabase.from("checklist_subtask_comments").insert({
-      subtask_id: subtask.id,
+      subtask_id: templateId,
       user_id: currentUser,
       comment: text,
     }).select().single();
@@ -491,20 +513,26 @@ export default function ChecklistPage() {
     if (error) return void toast.error("Erro ao enviar mensagem");
 
     if (data) {
-      setSubtasks((prev) => ({
-        ...prev,
-        [subtask.checklist_item_id]: (prev[subtask.checklist_item_id] || []).map((s) =>
-          s.id === subtask.id ? { ...s, comments: [...(s.comments || []), data] } : s
-        ),
-      }));
-      setCommentInputs((prev) => ({ ...prev, [subtask.id]: "" }));
+      const newMsg: TaskGeneralMessage = {
+        id: data.id,
+        checklist_item_id: templateId,
+        user_id: currentUser,
+        comment: text,
+        created_at: data.created_at
+      };
 
-      const targetUserId = assignedUserId || (subtask.assigned_to !== currentUser ? subtask.assigned_to : null);
-      if (targetUserId) {
+      setTaskMessages((prev) => ({
+        ...prev,
+        [templateId]: [...(prev[templateId] || []), newMsg],
+      }));
+      setTaskMessageInputs((prev) => ({ ...prev, [templateId]: "" }));
+
+      const targetUserId = assignedUserId || (templates.find(t => t.id === templateId)?.assigned_to);
+      if (targetUserId && targetUserId !== currentUser) {
         const senderName = currentUserProfile?.full_name || "Alguém";
         await supabase.from("notifications").insert({
           user_id: targetUserId,
-          title: "Nova mensagem / menção",
+          title: "Nova mensagem na tarefa",
           message: `${senderName} comentou: "${text}"`,
         });
         fetchNotifications();
@@ -513,7 +541,6 @@ export default function ChecklistPage() {
     }
   }
 
-  // Se o usuário clicar em "Adicionar Passo", cria uma subtarefa limpa
   async function handleAddSubtask(templateId: string, text: string, assignedUserId: string | null) {
     const { data, error } = await supabase.from("checklist_subtasks").insert({ 
       checklist_item_id: templateId, 
@@ -527,7 +554,7 @@ export default function ChecklistPage() {
     if (data) {
       setSubtasks((prev) => ({
         ...prev,
-        [templateId]: [...(prev[templateId] || []), { ...data, comments: [] }],
+        [templateId]: [...(prev[templateId] || []), { ...data }],
       }));
       setNewSubtaskTexts((prev) => ({ ...prev, [templateId]: "" }));
 
@@ -819,8 +846,8 @@ export default function ChecklistPage() {
       if (isGestor) {
         const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
         const subtaskAssignedToMe = (subtasks[t.id] || []).some(s => s.assigned_to === currentUser);
-        const commentAssignedToMe = (subtasks[t.id] || []).some(s => (s.comments || []).some(c => c.user_id === currentUser));
-        if (!isMyTask && !subtaskAssignedToMe && !commentAssignedToMe) return false;
+        const messageAssignedToMe = (taskMessages[t.id] || []).some(m => m.user_id === currentUser);
+        if (!isMyTask && !subtaskAssignedToMe && !messageAssignedToMe) return false;
       }
 
       if (t.is_one_time) {
@@ -837,13 +864,14 @@ export default function ChecklistPage() {
       }
       return false;
     });
-  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGestor, users, currentUser, subtasks]);
+  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGestor, users, currentUser, subtasks, taskMessages]);
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
   const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
+      const itemMsgs = taskMessages[t.id] || [];
       const hasSubtaskAssignedToUser = filterUser !== "all" && itemSubs.some(s => s.assigned_to === filterUser);
       const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to || hasSubtaskAssignedToUser;
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
@@ -855,13 +883,13 @@ export default function ChecklistPage() {
       }
 
       if (isColaborador) {
-        const assignedToMe = t.assigned_to === currentUser || itemSubs.some(s => s.assigned_to === currentUser || (s.comments || []).some(c => c.user_id === currentUser)) || t.created_by === currentUser;
+        const assignedToMe = t.assigned_to === currentUser || itemSubs.some(s => s.assigned_to === currentUser) || itemMsgs.some(m => m.user_id === currentUser) || t.created_by === currentUser;
         if (!assignedToMe && t.assigned_to) return false;
       }
 
       return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa && (!hideCompleted || !isDone(t));
     });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, hideCompleted, logs, currentUser]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, hideCompleted, logs, currentUser]);
 
   const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
   const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
@@ -1088,6 +1116,7 @@ export default function ChecklistPage() {
                     const done = isDone(t);
                     const log = logs[t.id];
                     const itemSubtasks = subtasks[t.id] || [];
+                    const itemMsgs = taskMessages[t.id] || [];
                     const isExpanded = !!expandedItems[t.id];
                     const completedSubs = itemSubtasks.filter((s) => s.completed).length;
 
@@ -1124,6 +1153,7 @@ export default function ChecklistPage() {
 
                                 <button onClick={() => setExpandedItems((prev) => ({ ...prev, [t.id]: !prev[t.id] }))} className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 bg-slate-50 px-2 py-1 rounded">
                                   {itemSubtasks.length > 0 && <span>{completedSubs}/{itemSubtasks.length} itens</span>}
+                                  {itemMsgs.length > 0 && <span className="flex items-center gap-0.5"><MessageSquare className="h-3 w-3" /> {itemMsgs.length}</span>}
                                   {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                 </button>
                               </div>
@@ -1155,97 +1185,94 @@ export default function ChecklistPage() {
 
                             {isExpanded && (
                               <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
-                                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Perguntas, Passos e Chat</p>
-                                
-                                {itemSubtasks.length === 0 ? (
-                                  <p className="text-xs text-slate-400">Nenhum item adicionado.</p>
-                                ) : (
-                                  <ul className="space-y-4">
-                                    {itemSubtasks.map((sub) => {
-                                      const commentsList = sub.comments || [];
-                                      return (
-                                        <li key={sub.id} className="rounded-lg bg-white p-3 border border-slate-200 shadow-sm">
-                                          <div className="flex items-start justify-between gap-2">
-                                            <label className="flex items-start gap-2 cursor-pointer select-none flex-1">
-                                              <input 
-                                                type="checkbox" 
-                                                disabled={!!(requiresAcceptance && !canAccept)} 
-                                                checked={sub.completed} 
-                                                onChange={() => { if(requiresAcceptance && !canAccept) { toast.info("Responsável precisa aceitar a tarefa primeiro."); return; } handleToggleSubtask(sub); }} 
-                                                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary mt-0.5 shrink-0 disabled:opacity-50" 
-                                              />
-                                              <span className={`break-words text-sm font-semibold ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
-                                                {sub.title}
-                                                {sub.assigned_to && (
-                                                  <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 border border-indigo-100">
-                                                    <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
-                                                  </span>
-                                                )}
-                                              </span>
-                                            </label>
-                                            <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
-                                          </div>
-
-                                          <div className="mt-3 ml-6 pl-3 border-l-2 border-slate-100 space-y-3">
-                                            {commentsList.length > 0 && (
-                                              <div className="space-y-2">
-                                                {commentsList.map((c) => (
-                                                  <div key={c.id} className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100 text-xs">
-                                                    <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
-                                                      <span className="flex items-center gap-1.5 text-primary">
-                                                        <UserIcon className="h-3 w-3" /> {userName(c.user_id)}
-                                                      </span>
-                                                      <span className="text-[10px] text-slate-400 font-normal">
-                                                        {new Date(c.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
-                                                      </span>
-                                                    </div>
-                                                    
-                                                    <p className="text-slate-700 whitespace-pre-wrap pl-4">
-                                                      {(() => {
-                                                        const names = users.map(u => u.full_name || u.email).filter(Boolean);
-                                                        if (names.length === 0) return c.comment;
-                                                        
-                                                        const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
-                                                        
-                                                        return c.comment.split(regex).map((part, i) => 
-                                                          part.match(regex) ? (
-                                                            <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
-                                                              {part}
-                                                            </span>
-                                                          ) : (
-                                                            part
-                                                          )
-                                                        );
-                                                      })()}
-                                                    </p>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-
-                                            <MentionInput
-                                              value={commentInputs[sub.id] || ""}
-                                              onChange={(val) => setCommentInputs(prev => ({ ...prev, [sub.id]: val }))}
-                                              onSubmit={(text, assignedToId) => handleAddComment(sub, text, assignedToId)}
-                                              users={users}
-                                              placeholder="Responder... (Use @ para marcar alguém)"
-                                              isComment={true}
+                                {/* Seção 1: Passos e Perguntas Operacionais (Checklist) */}
+                                <div>
+                                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Perguntas e Passos da Tarefa</p>
+                                  {itemSubtasks.length === 0 ? (
+                                    <p className="text-xs text-slate-400 mb-2">Nenhum passo obrigatório adicionado.</p>
+                                  ) : (
+                                    <ul className="space-y-2 mb-3">
+                                      {itemSubtasks.map((sub) => (
+                                        <li key={sub.id} className="flex items-center justify-between rounded-lg bg-white p-2.5 border border-slate-200 shadow-sm">
+                                          <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
+                                            <input 
+                                              type="checkbox" 
+                                              disabled={!!(requiresAcceptance && !canAccept)} 
+                                              checked={sub.completed} 
+                                              onChange={() => { if(requiresAcceptance && !canAccept) { toast.info("Responsável precisa aceitar a tarefa primeiro."); return; } handleToggleSubtask(sub); }} 
+                                              className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary shrink-0 disabled:opacity-50" 
                                             />
-                                          </div>
+                                            <span className={`break-words text-sm font-semibold ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                                              {sub.title}
+                                              {sub.assigned_to && (
+                                                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 border border-indigo-100">
+                                                  <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
+                                                </span>
+                                              )}
+                                            </span>
+                                          </label>
+                                          <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
                                         </li>
-                                      );
-                                    })}
-                                  </ul>
-                                )}
+                                      ))}
+                                    </ul>
+                                  )}
+                                  <div className="pt-2">
+                                    <MentionInput
+                                      value={newSubtaskTexts[t.id] || ""}
+                                      onChange={(val) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: val }))}
+                                      onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId)}
+                                      users={users}
+                                      placeholder="Adicionar passo ou pergunta obrigatória... (Use @ para direcionar)"
+                                      buttonLabel="Adicionar Passo"
+                                    />
+                                  </div>
+                                </div>
 
-                                <div className="mt-4 pt-4 border-t border-slate-200">
+                                {/* Seção 2: Chat Geral / Histórico de Mensagens (Sem vistar subtarefa) */}
+                                <div className="pt-4 border-t border-slate-200">
+                                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
+                                  {itemMsgs.length === 0 ? (
+                                    <p className="text-xs text-slate-400 mb-3">Nenhuma mensagem ainda.</p>
+                                  ) : (
+                                    <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
+                                      {itemMsgs.map((msg) => (
+                                        <div key={msg.id} className="rounded-lg bg-white p-2.5 border border-slate-200 text-xs shadow-sm">
+                                          <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                                            <span className="flex items-center gap-1.5 text-primary">
+                                              <UserIcon className="h-3 w-3" /> {userName(msg.user_id)}
+                                            </span>
+                                            <span className="text-[10px] text-slate-400 font-normal">
+                                              {new Date(msg.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
+                                            </span>
+                                          </div>
+                                          <p className="text-slate-700 whitespace-pre-wrap pl-4">
+                                            {(() => {
+                                              const names = users.map(u => u.full_name || u.email).filter(Boolean);
+                                              if (names.length === 0) return msg.comment;
+                                              const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
+                                              return msg.comment.split(regex).map((part, i) => 
+                                                part.match(regex) ? (
+                                                  <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
+                                                    {part}
+                                                  </span>
+                                                ) : (
+                                                  part
+                                                )
+                                              );
+                                            })()}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                   <MentionInput
-                                    value={newSubtaskTexts[t.id] || ""}
-                                    onChange={(val) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: val }))}
-                                    onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId)}
+                                    value={taskMessageInputs[t.id] || ""}
+                                    onChange={(val) => setTaskMessageInputs(prev => ({ ...prev, [t.id]: val }))}
+                                    onSubmit={(text, assignedToId) => handleAddTaskMessage(t.id, text, assignedToId)}
                                     users={users}
-                                    placeholder="Adicionar pergunta ou passo... (Use @ para direcionar)"
-                                    buttonLabel="Adicionar Passo"
+                                    placeholder="Escreva uma mensagem... (Use @ para marcar alguém)"
+                                    buttonLabel="Enviar"
+                                    isComment={true}
                                   />
                                 </div>
                               </div>
