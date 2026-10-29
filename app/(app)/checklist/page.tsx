@@ -1165,13 +1165,13 @@ export default function ChecklistPage() {
               {unreadNotificationsCount > 0 && <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">{unreadNotificationsCount}</span>}
             </button>
             {showNotifications && (
-              <div className="absolute right-0 sm:right-0 left-auto mt-2 w-72 sm:w-80 rounded-xl border bg-white p-3 shadow-xl z-50 max-w-[90vw]">
+              <div className="fixed sm:absolute right-4 sm:right-0 left-4 sm:left-auto top-20 sm:top-auto mt-2 w-auto sm:w-80 rounded-xl border bg-white p-3 shadow-2xl z-50 max-w-[calc(100vw-2rem)] sm:max-w-none">
                 <div className="flex items-center justify-between border-b pb-2 mb-2">
                   <span className="font-semibold text-sm text-slate-800">Notificações</span>
-                  <button onClick={() => setShowNotifications(false)} className="text-slate-400 hover:text-slate-700"><X className="h-4 w-4" /></button>
+                  <button onClick={() => setShowNotifications(false)} className="text-slate-400 hover:text-slate-700 p-1"><X className="h-4 w-4" /></button>
                 </div>
                 {notifications.length === 0 ? <p className="py-4 text-center text-xs text-slate-400">Nenhuma notificação</p> : (
-                  <ul className="max-h-60 overflow-y-auto space-y-2">
+                  <ul className="max-h-[60vh] sm:max-h-60 overflow-y-auto space-y-2">
                     {notifications.map((n) => (
                       <li key={n.id} onClick={() => markNotificationAsRead(n)} className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors hover:bg-slate-100 ${n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium"}`}>
                         <p className="font-semibold">{n.title}</p>
