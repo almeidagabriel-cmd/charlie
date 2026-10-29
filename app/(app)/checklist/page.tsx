@@ -353,6 +353,10 @@ export default function ChecklistPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // Modal de Aceite com Data de Execução
+  const [acceptingTemplate, setAcceptingTemplate] = useState<Template | null>(null);
+  const [acceptDueDate, setAcceptDueDate] = useState("");
+
   const [showOneTimeModal, setShowOneTimeModal] = useState(false);
   const [editingOneTimeId, setEditingOneTimeId] = useState<string | null>(null);
   const [oneTimeTitle, setOneTimeTitle] = useState("");
@@ -415,7 +419,6 @@ export default function ChecklistPage() {
 
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
-  // Função ajustada para utilizar a RPC do Supabase e ignorar o RLS de inserção direta
   async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
     if (!userId || userId === currentUser) return;
 
@@ -635,18 +638,33 @@ export default function ChecklistPage() {
     }));
   }
 
-  async function handleAcceptTask(template: Template) {
-    setTogglingId(template.id);
-    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true }).eq("id", template.id);
+  // Abre modal para definir data de execução ao aceitar
+  function handleOpenAcceptModal(template: Template) {
+    setAcceptingTemplate(template);
+    setAcceptDueDate(template.due_date ? template.due_date.split("T")[0] : todayLocal());
+  }
+
+  async function handleConfirmAcceptTask(e: React.FormEvent) {
+    e.preventDefault();
+    if (!acceptingTemplate) return;
+
+    setTogglingId(acceptingTemplate.id);
+    const updatePayload: any = { accepted: true };
+    if (acceptDueDate) {
+      updatePayload.due_date = acceptDueDate;
+    }
+
+    const { error } = await supabase.from("daily_checklist_templates").update(updatePayload).eq("id", acceptingTemplate.id);
     setTogglingId(null);
     if (error) return void toast.error("Erro ao aceitar a tarefa.");
     
-    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true } : t));
+    setTemplates((prev) => prev.map((t) => t.id === acceptingTemplate.id ? { ...t, accepted: true, due_date: acceptDueDate || t.due_date } : t));
+    setAcceptingTemplate(null);
     toast.success("Tarefa aceita com sucesso!");
 
-    if (template.created_by && template.created_by !== currentUser) {
+    if (acceptingTemplate.created_by && acceptingTemplate.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
-      await safeSendNotification(template.created_by, "Tarefa Aceita", `${senderName} aceitou e iniciou a tarefa: "${template.title}"`);
+      await safeSendNotification(acceptingTemplate.created_by, "Tarefa Aceita", `${senderName} aceitou e definiu o prazo: "${acceptingTemplate.title}"`);
     }
   }
 
@@ -967,7 +985,8 @@ export default function ChecklistPage() {
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
-  const visibleTasks = useMemo(() => {
+  // Lista base sem o filtro de ocultar concluídas, para calcular corretamente o progresso total
+  const visibleTasksBase = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
       const itemMsgs = taskMessages[t.id] || [];
@@ -988,9 +1007,13 @@ export default function ChecklistPage() {
         if (!assignedToMe && t.assigned_to) return false;
       }
 
-      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa && (!hideCompleted || !isDone(t));
+      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa;
     });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, hideCompleted, logs, currentUser]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, currentUser]);
+
+  const visibleTasks = useMemo(() => {
+    return visibleTasksBase.filter(t => !hideCompleted || !isDone(t));
+  }, [visibleTasksBase, hideCompleted, logs]);
 
   const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
   const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
@@ -1006,8 +1029,15 @@ export default function ChecklistPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [currentTabTasks]);
 
-  const doneCount = currentTabTasks.filter(isDone).length;
-  const totalCount = currentTabTasks.length;
+  // Cálculos baseados na aba atual completa (sempre reflete o total correto mesmo ocultando as concluídas)
+  const currentTabBaseTasks = activeTab === "daily" 
+    ? visibleTasksBase.filter(t => !t.is_one_time) 
+    : activeTab === "tasks" 
+      ? visibleTasksBase.filter(t => t.is_one_time) 
+      : [];
+
+  const doneCount = currentTabBaseTasks.filter(isDone).length;
+  const totalCount = currentTabBaseTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
   const report = useMemo(() => {
@@ -1015,7 +1045,7 @@ export default function ChecklistPage() {
     const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
 
     targetUsersForReport.forEach(u => {
-      const userTasks = visibleTasks.filter(t => t.assigned_to === u.id);
+      const userTasks = visibleTasksBase.filter(t => t.assigned_to === u.id);
       let done = 0;
       userTasks.forEach(t => { if (isDone(t)) done++; });
       rows.push({
@@ -1027,7 +1057,7 @@ export default function ChecklistPage() {
     });
 
     return rows.sort((a, b) => b.total - a.total);
-  }, [visibleUsers, visibleTasks, logs]);
+  }, [visibleUsers, visibleTasksBase, logs]);
 
   const rhReportData = useMemo(() => {
     let totalAssigned = 0;
@@ -1273,7 +1303,7 @@ export default function ChecklistPage() {
                                   Para iniciar e conseguir concluir os passos, o responsável precisa aceitar a tarefa.
                                 </div>
                                 {canAccept && (
-                                  <button onClick={() => handleAcceptTask(t)} disabled={togglingId === t.id} className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors">
+                                  <button onClick={() => handleOpenAcceptModal(t)} disabled={togglingId === t.id} className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors">
                                     {togglingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
                                     Aceitar Tarefa
                                   </button>
@@ -1554,6 +1584,24 @@ export default function ChecklistPage() {
             </ul>
           </div>
         </div>
+      )}
+
+      {/* Modal para Definir Data de Execução ao Aceitar Tarefa */}
+      {acceptingTemplate && (
+        <Modal title={`Aceitar Tarefa: ${acceptingTemplate.title}`} onClose={() => setAcceptingTemplate(null)}>
+          <form onSubmit={handleConfirmAcceptTask} className="space-y-4">
+            <p className="text-xs text-slate-600">Por favor, defina ou confirme a data de execução desta tarefa para prosseguir:</p>
+            <Field label="Data de Execução (Prazo) *">
+              <input type="date" value={acceptDueDate} onChange={(e) => setAcceptDueDate(e.target.value)} required className={inputCls} />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setAcceptingTemplate(null)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+              <button type="submit" disabled={togglingId === acceptingTemplate.id} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
+                {togglingId === acceptingTemplate.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />} Confirmar Aceite
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {completingTemplate && (
