@@ -864,13 +864,14 @@ export default function ChecklistPage() {
       empresa: finalEmpresa,
       setor: oneTimeSetor || "Geral / Todos", 
       assigned_to: targetUser ?? null, 
-      due_date: oneTimeDueDate || null,
       recurrence_type: "daily" as RecurrenceType, 
       is_one_time: true,
-      accepted: isAutoAccepted,
-      accepted_at: isAutoAccepted ? nowIso : null,
       requires_input: false,
       requires_photo: false
+      // As seguintes linhas foram removidas/comentadas:
+      // due_date: oneTimeDueDate || null,
+      // accepted: isAutoAccepted,
+      // accepted_at: isAutoAccepted ? nowIso : null,
     };
 
     let result;
