@@ -1022,7 +1022,7 @@ export default function ChecklistPage() {
       let hasAccessToEmpresa = true;
       if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
         const isGlobalEmpresa = !t.empresa || t.empresa === "Todas / Grupo B&A";
-        hasAccessToEmpresa = isGlobalEmpresa || currentUserProfile.empresas.includes(t.empresa);
+        hasAccessToEmpresa = isGlobalEmpresa || (!!t.empresa && currentUserProfile.empresas.includes(t.empresa));
       }
 
       if (isColaborador) {
