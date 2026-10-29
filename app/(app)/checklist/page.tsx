@@ -327,6 +327,7 @@ export default function ChecklistPage() {
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({});
   const [taskMessages, setTaskMessages] = useState<Record<string, TaskMessage[]>>({});
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
   
   const [newSubtaskTexts, setNewSubtaskTexts] = useState<Record<string, string>>({});
   const [taskMessageInputs, setTaskMessageInputs] = useState<Record<string, string>>({});
@@ -353,7 +354,6 @@ export default function ChecklistPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  // Modal de Aceite com Data de Execução
   const [acceptingTemplate, setAcceptingTemplate] = useState<Template | null>(null);
   const [acceptDueDate, setAcceptDueDate] = useState("");
 
@@ -492,9 +492,39 @@ export default function ChecklistPage() {
     }
   }
 
-  async function markNotificationAsRead(id: string) {
-    await supabase.from("notifications").update({ read: true }).eq("id", id);
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  async function markNotificationAsRead(n: NotificationItem) {
+    await supabase.from("notifications").update({ read: true }).eq("id", n.id);
+    setNotifications((prev) => prev.map((item) => (item.id === n.id ? { ...item, read: true } : item)));
+    setShowNotifications(false);
+
+    // Tenta encontrar a tarefa correspondente pelo título na mensagem ou no título da notificação
+    const matchingTemplate = templates.find(t => 
+      n.message.toLowerCase().includes(t.title.toLowerCase()) || 
+      n.title.toLowerCase().includes(t.title.toLowerCase())
+    );
+
+    if (matchingTemplate) {
+      // Se for pontual, vai para a aba de tarefas; senão, rotinas diárias
+      if (matchingTemplate.is_one_time) {
+        setActiveTab("tasks");
+      } else {
+        setActiveTab("daily");
+      }
+
+      setExpandedItems(prev => ({ ...prev, [matchingTemplate.id]: true }));
+      setHighlightedTaskId(matchingTemplate.id);
+
+      setTimeout(() => {
+        const el = document.getElementById(`task-${matchingTemplate.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 150);
+
+      setTimeout(() => {
+        setHighlightedTaskId(null);
+      }, 3000);
+    }
   }
 
   async function fetchSubtasks(templateIds: string[]) {
@@ -638,7 +668,6 @@ export default function ChecklistPage() {
     }));
   }
 
-  // Abre modal para definir data de execução ao aceitar
   function handleOpenAcceptModal(template: Template) {
     setAcceptingTemplate(template);
     setAcceptDueDate(template.due_date ? template.due_date.split("T")[0] : todayLocal());
@@ -985,7 +1014,6 @@ export default function ChecklistPage() {
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
-  // Lista base sem o filtro de ocultar concluídas, para calcular corretamente o progresso total
   const visibleTasksBase = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
@@ -1012,8 +1040,8 @@ export default function ChecklistPage() {
   }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, currentUser]);
 
   const visibleTasks = useMemo(() => {
-    return visibleTasksBase.filter(t => !hideCompleted || !isDone(t));
-  }, [visibleTasksBase, hideCompleted, logs]);
+    return visibleTasksBase.filter(t => !hideCompleted || !isDone(t) || t.id === highlightedTaskId);
+  }, [visibleTasksBase, hideCompleted, logs, highlightedTaskId]);
 
   const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
   const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
@@ -1029,7 +1057,6 @@ export default function ChecklistPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [currentTabTasks]);
 
-  // Cálculos baseados na aba atual completa (sempre reflete o total correto mesmo ocultando as concluídas)
   const currentTabBaseTasks = activeTab === "daily" 
     ? visibleTasksBase.filter(t => !t.is_one_time) 
     : activeTab === "tasks" 
@@ -1148,7 +1175,7 @@ export default function ChecklistPage() {
                 {notifications.length === 0 ? <p className="py-4 text-center text-xs text-slate-400">Nenhuma notificação</p> : (
                   <ul className="max-h-60 overflow-y-auto space-y-2">
                     {notifications.map((n) => (
-                      <li key={n.id} onClick={() => markNotificationAsRead(n.id)} className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors ${n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium"}`}>
+                      <li key={n.id} onClick={() => markNotificationAsRead(n)} className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors hover:bg-slate-100 ${n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium"}`}>
                         <p className="font-semibold">{n.title}</p>
                         <p className="mt-0.5">{n.message}</p>
                         <span className="mt-1 block text-[10px] text-slate-400">{new Date(n.created_at).toLocaleString("pt-BR")}</span>
@@ -1251,9 +1278,10 @@ export default function ChecklistPage() {
                     const requiresAcceptance = t.is_one_time && t.assigned_to && !t.accepted;
                     const canAccept = requiresAcceptance && t.assigned_to === currentUser;
                     const isOverdue = t.due_date && t.due_date < todayStr && !done;
+                    const isHighlighted = highlightedTaskId === t.id;
 
                     return (
-                      <li key={t.id} className={`flex flex-col px-4 py-4 ${requiresAcceptance ? "bg-amber-50/30" : ""}`}>
+                      <li key={t.id} id={`task-${t.id}`} className={`flex flex-col px-4 py-4 transition-colors ${requiresAcceptance ? "bg-amber-50/30" : ""} ${isHighlighted ? "bg-amber-100/60 ring-2 ring-amber-400" : ""}`}>
                         <div className="flex items-start gap-3">
                           <button onClick={() => handleCheckClick(t)} disabled={togglingId === t.id} className="mt-0.5 shrink-0 disabled:opacity-50">
                             {togglingId === t.id ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : done ? <CheckCircle2 className="h-6 w-6 text-emerald-500" /> : <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />}
@@ -1586,7 +1614,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Modal para Definir Data de Execução ao Aceitar Tarefa */}
       {acceptingTemplate && (
         <Modal title={`Aceitar Tarefa: ${acceptingTemplate.title}`} onClose={() => setAcceptingTemplate(null)}>
           <form onSubmit={handleConfirmAcceptTask} className="space-y-4">
