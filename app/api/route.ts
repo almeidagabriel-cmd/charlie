@@ -2,14 +2,20 @@ import { NextResponse } from "next/server";
 import webpush from "web-push";
 import { createClient } from "@/lib/supabase/server";
 
-webpush.setVapidDetails(
-  "mailto:contato@grupoba.com", // O seu e-mail de contacto
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!,
-  process.env.VAPID_PRIVATE_KEY!
-);
-
 export async function POST(request: Request) {
   try {
+    // A CONFIGURAÇÃO DEVE FICAR AQUI DENTRO!
+    if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+      webpush.setVapidDetails(
+        "mailto:contato@grupoba.com", // O seu e-mail de contacto
+        process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        process.env.VAPID_PRIVATE_KEY
+      );
+    } else {
+      console.error("Chaves VAPID não configuradas no ambiente.");
+      return NextResponse.json({ error: "Configuração do servidor incompleta" }, { status: 500 });
+    }
+
     const { userId, title, message, url } = await request.json();
 
     if (!userId) {
