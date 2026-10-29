@@ -811,7 +811,14 @@ export default function ChecklistPage() {
     setOneTimeDesc("");
     setOneTimeCategory("Geral");
     setOneTimeAssignedTo("");
-    setOneTimeEmpresa("");
+    
+    // Força a empresa ser a correspondente ao perfil do utilizador ou "Todas"
+    if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
+      setOneTimeEmpresa(currentUserProfile.empresas[0]);
+    } else {
+      setOneTimeEmpresa("Todas / Grupo B&A");
+    }
+    
     setOneTimeSetor("Geral / Todos");
     setOneTimeDueDate("");
     setOneTimeFormSubtasks([]);
@@ -843,18 +850,27 @@ export default function ChecklistPage() {
     const isAutoAccepted = targetUser === currentUser || !targetUser;
     const nowIso = new Date().toISOString();
 
+    let finalEmpresa = oneTimeEmpresa;
+    if (!finalEmpresa) {
+       finalEmpresa = (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0)
+         ? currentUserProfile.empresas[0]
+         : "Todas / Grupo B&A";
+    }
+
     const payload = {
       title: oneTimeTitle, 
       description: oneTimeDesc, 
       category: oneTimeCategory, 
-      empresa: oneTimeEmpresa || "Todas / Grupo B&A",
+      empresa: finalEmpresa,
       setor: oneTimeSetor || "Geral / Todos", 
       assigned_to: targetUser ?? null, 
       due_date: oneTimeDueDate || null,
       recurrence_type: "daily" as RecurrenceType, 
       is_one_time: true,
       accepted: isAutoAccepted,
-      accepted_at: isAutoAccepted ? nowIso : null
+      accepted_at: isAutoAccepted ? nowIso : null,
+      requires_input: false,
+      requires_photo: false
     };
 
     let result;
@@ -866,7 +882,8 @@ export default function ChecklistPage() {
 
     if (result.error) {
       setIsSavingTask(false);
-      return void toast.error("Não foi possível salvar a tarefa");
+      // Apresenta o erro exato do Supabase no Toast para melhor rastreabilidade
+      return void toast.error(`Não foi possível salvar a tarefa: ${result.error.message}`);
     }
 
     const data = result.data as Template;
@@ -922,7 +939,14 @@ export default function ChecklistPage() {
 
   function handleCancelEdit() {
     setEditingTemplateId(null); setNewTitle(""); setNewDesc(""); setNewCategory("Geral");
-    setNewEmpresa("Todas / Grupo B&A"); setNewSetor("Geral / Todos"); setNewAssignedTo("");
+    
+    if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
+      setNewEmpresa(currentUserProfile.empresas[0]);
+    } else {
+      setNewEmpresa("Todas / Grupo B&A");
+    }
+
+    setNewSetor("Geral / Todos"); setNewAssignedTo("");
     setNewRecurrenceType("daily"); setNewRecurrenceDay(1); setNewCustomDays([]);
     setNewRequiresInput(false); setNewInputLabel(""); setNewRequiresPhoto(false); setFormSubtasks([]); setFormSubtaskInput("");
   }
@@ -943,7 +967,7 @@ export default function ChecklistPage() {
       ? await supabase.from("daily_checklist_templates").update(payload).eq("id", editingTemplateId).select().single()
       : await supabase.from("daily_checklist_templates").insert({ ...payload, created_by: currentUser, is_one_time: false }).select().single();
 
-    if (result.error) { setSavingTemplate(false); return void toast.error("Erro ao salvar"); }
+    if (result.error) { setSavingTemplate(false); return void toast.error("Erro ao salvar: " + result.error.message); }
     const saved = result.data as Template;
     if (formSubtasks.length > 0) {
       const subtaskInserts = formSubtasks.map((st) => ({ checklist_item_id: saved.id, title: st.title, assigned_to: st.assigned_to ?? null, completed: false }));
@@ -1668,7 +1692,14 @@ export default function ChecklistPage() {
         <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
           <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
+              <Field label="Empresa">
+                <select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>
+                  {isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0
+                    ? currentUserProfile.empresas.map(e => <option key={e} value={e}>{e}</option>)
+                    : EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)
+                  }
+                </select>
+              </Field>
               <Field label="Setor / Depto"><select value={oneTimeSetor} onChange={(e) => setOneTimeSetor(e.target.value)} className={inputCls}>{SETORES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
             </div>
             <Field label="Título *"><input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} placeholder="Ex: Orçamento confraternização" /></Field>
