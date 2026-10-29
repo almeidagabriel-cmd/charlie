@@ -35,14 +35,10 @@ import {
   Clock,
   BarChart3,
   MessageSquare,
-  Check,
-  AlertCircle,
-  TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { createClient } from "@/lib/supabase/client";
-import { PushNotificationManager } from "@/components/PushNotificationManager"; // <--- IMPORTADO AQUI
 
 // --- Tipagens ---
 interface Profile {
@@ -72,7 +68,6 @@ interface Template {
   requires_photo: boolean;
   is_one_time: boolean;
   due_date?: string | null;
-  expected_resolution_date?: string | null;
   accepted?: boolean;
   created_at?: string;
 }
@@ -115,7 +110,6 @@ interface NotificationItem {
   message: string;
   read: boolean;
   created_at: string;
-  template_id?: string;
 }
 
 // --- Componente Inteligente de Menção (@) ---
@@ -154,6 +148,7 @@ function MentionInput({
 
     const cursor = e.target.selectionStart || 0;
     const textBeforeCursor = val.slice(0, cursor);
+    // Aceita letras acentuadas (João, Conceição...), números, _, ponto e espaços
     const match = textBeforeCursor.match(/@([\p{L}\p{N}_.\s]*)$/u);
 
     if (match) {
@@ -193,7 +188,7 @@ function MentionInput({
       onSubmit={(e) => {
         e.preventDefault();
         if (!value.trim()) return;
-        onSubmit(value, assignedUserId ?? null);
+        onSubmit(value, assignedUserId);
         setAssignedUserId(null);
         setShowDropdown(false);
       }}
@@ -307,9 +302,11 @@ function recurrenceText(t: Template) {
   return RECURRENCE_LABEL[t.recurrence_type] ?? "Todos os dias";
 }
 
+// Encontra todos os usuários marcados com @Nome no texto
 function extractMentionedUserIds(text: string, users: Profile[]): string[] {
   let remaining = text.toLowerCase();
   const ids = new Set<string>();
+  // nomes mais longos primeiro: "@Ana Paula" não deve virar também "@Ana"
   const sorted = [...users].sort(
     (a, b) => (b.full_name || b.email || "").length - (a.full_name || a.email || "").length
   );
@@ -353,16 +350,11 @@ export default function ChecklistPage() {
   const [filterEmpresa, setFilterEmpresa] = useState<string>("all");
   const [filterSetor, setFilterSetor] = useState<string>("all");
   
-  const todayStr = todayLocal();
-
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [completingTemplate, setCompletingTemplate] = useState<Template | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-
-  const [acceptingTask, setAcceptingTask] = useState<Template | null>(null);
-  const [resolutionDate, setResolutionDate] = useState("");
 
   const [showOneTimeModal, setShowOneTimeModal] = useState(false);
   const [editingOneTimeId, setEditingOneTimeId] = useState<string | null>(null);
@@ -397,20 +389,14 @@ export default function ChecklistPage() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<Template | null>(null);
 
-  const userRole = currentUserProfile?.role ?? "colaborador";
-  const userEmail = (currentUserProfile?.email || "").toLowerCase();
-  
-  const isColaborador = userRole === "colaborador" || userRole === "member";
+  const userRole = currentUserProfile?.role ?? "member";
+  const isColaborador = userRole === "member";
   const isDiretor = userRole === "diretor";
-  const isGerente = userRole === "gerente";
-  const isAnalista = userRole === "analista";
-  
-  const isHRAnalyst = isAnalista && (userEmail.includes("rh") || userEmail.includes("recursos") || userEmail.includes("pessoal") || userRole === "analista");
-  const canAccessHRReport = isDiretor || isHRAnalyst;
-  const isPrivileged = !isColaborador;
+  const isGestor = userRole === "gestor";
 
   useEffect(() => { fetchInitialData(); }, []);
 
+  // Notificações: carga inicial + tempo real para o usuário logado
   useEffect(() => {
     if (!currentUser) return;
     fetchNotifications();
@@ -433,32 +419,35 @@ export default function ChecklistPage() {
 
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
-  async function safeSendNotification(userId: string | null | undefined, title: string, message: string, templateId?: string) {
+  // Envia notificação para OUTRO usuário (não adiciona na tela de quem envia)
+  async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
     if (!userId || userId === currentUser) return;
-    
-    try {
-      // 1. Salva a notificação interna no banco
-      await supabase.from("notifications").insert({ 
-      	user_id: userId, 
-      	title, 
-      	message,
-      	template_id: templateId || null 
-      });
 
-      // 2. Dispara a Notificação Push para o navegador/dispositivo do usuário
-      await fetch("/api/send-push", {
-      	method: "POST",
-      	headers: { "Content-Type": "application/json" },
-      	body: JSON.stringify({ 
-      		userId, 
-      		title, 
-      		message, 
-      		url: "/checklist" 
-      	}),
-      });
-    } catch (error) {
-      console.error("[notifications] falha ao enviar:", error);
+    // 1) Grava a notificação (sininho + realtime)
+    const { data, error } = await supabase
+      .from("notifications")
+      .insert({ user_id: userId, title, message })
+      .select("id")
+      .single();
+
+    if (error || !data) {
+      console.error("[notifications] falha ao inserir:", error);
+      toast.error("A notificação não foi enviada", { description: error?.message });
+      return;
     }
+
+    // 2) Dispara o push nativo. Envia só o id: o servidor lê título, destinatário
+    //    e subscrições da base de dados e confirma que quem chama é o remetente.
+    fetch("/api/send-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notificationId: data.id }),
+      keepalive: true,
+    })
+      .then(async (res) => {
+        if (!res.ok) console.error("[push] falhou:", res.status, await res.text());
+      })
+      .catch((err) => console.error("[push] erro de rede:", err));
   }
 
   async function fetchInitialData() {
@@ -472,8 +461,7 @@ export default function ChecklistPage() {
         profileData = myProfile;
         setCurrentUserProfile(myProfile);
         setFilterUser(myProfile.id);
-        const myRole = myProfile.role ?? "colaborador";
-        if ((myRole === "colaborador" || myRole === "member") && myProfile.empresas?.length === 1) {
+        if (myProfile.role === "member" && myProfile.empresas?.length === 1) {
            setFilterEmpresa(myProfile.empresas[0]);
         }
       }
@@ -483,8 +471,7 @@ export default function ChecklistPage() {
     if (profilesData) setUsers(profilesData);
 
     let query = supabase.from("daily_checklist_templates").select("*").order("created_at", { ascending: true });
-    const myRole = profileData?.role ?? "colaborador";
-    if ((myRole === "colaborador" || myRole === "member") && profileData?.empresas?.length) {
+    if (profileData?.role === "member" && profileData.empresas?.length) {
       query = query.in("empresa", profileData.empresas);
     }
     const { data: tmpls, error } = await query;
@@ -512,38 +499,6 @@ export default function ChecklistPage() {
   async function markNotificationAsRead(id: string) {
     await supabase.from("notifications").update({ read: true }).eq("id", id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-  }
-
-  function handleNotificationClick(n: NotificationItem) {
-    if (!n.read) markNotificationAsRead(n.id);
-    setShowNotifications(false);
-
-    if (n.template_id) {
-      const task = templates.find(t => t.id === n.template_id);
-      
-      if (task) {
-        setActiveTab(task.is_one_time ? "tasks" : "daily");
-
-        if (hideCompleted && logs[task.id]?.completed) {
-          setHideCompleted(false);
-        }
-
-        setExpandedItems(prev => ({ ...prev, [task.id]: true }));
-
-        setTimeout(() => {
-          const element = document.getElementById(`task-${task.id}`);
-          if (element) {
-            element.scrollIntoView({ behavior: "smooth", block: "center" });
-            element.classList.add("ring-2", "ring-primary", "bg-primary/5", "transition-all", "duration-500");
-            setTimeout(() => {
-              element.classList.remove("ring-2", "ring-primary", "bg-primary/5");
-            }, 2500);
-          }
-        }, 300);
-      } else {
-        toast.info("A tarefa desta notificação não foi encontrada ou foi excluída.");
-      }
-    }
   }
 
   async function fetchSubtasks(templateIds: string[]) {
@@ -642,12 +597,13 @@ export default function ChecklistPage() {
       const task = templates.find(t => t.id === templateId);
       const taskTitle = task?.title || "Tarefa";
 
+      // Todos os usuários marcados com @ no texto + o selecionado no dropdown
       const mentioned = new Set(extractMentionedUserIds(text, users));
       if (assignedUserId) mentioned.add(assignedUserId);
 
       await Promise.all(
         [...mentioned].map(id =>
-          safeSendNotification(id, `Você foi mencionado em "${taskTitle}"`, `${senderName}: ${text}`, templateId)
+          safeSendNotification(id, `Você foi mencionado em "${taskTitle}"`, `${senderName}: ${text}`)
         )
       );
     }
@@ -673,7 +629,7 @@ export default function ChecklistPage() {
 
       if (assignedUserId) {
         const senderName = currentUserProfile?.full_name || "Alguém";
-        await safeSendNotification(assignedUserId, "Nova pergunta / passo", `${senderName} marcou-o: "${text}"`, templateId);
+        await safeSendNotification(assignedUserId, "Nova pergunta / passo", `${senderName} marcou-o: "${text}"`);
       }
     }
   }
@@ -687,39 +643,19 @@ export default function ChecklistPage() {
     }));
   }
 
-  async function confirmAcceptTask(e: React.FormEvent) {
-    e.preventDefault();
-    if (!acceptingTask) return;
-
-    setTogglingId(acceptingTask.id);
-    const { error } = await supabase
-      .from("daily_checklist_templates")
-      .update({ 
-        accepted: true, 
-        expected_resolution_date: resolutionDate || null 
-      })
-      .eq("id", acceptingTask.id);
-
+  async function handleAcceptTask(template: Template) {
+    setTogglingId(template.id);
+    const { error } = await supabase.from("daily_checklist_templates").update({ accepted: true }).eq("id", template.id);
     setTogglingId(null);
     if (error) return void toast.error("Erro ao aceitar a tarefa.");
     
-    setTemplates((prev) => prev.map((t) => t.id === acceptingTask.id ? { ...t, accepted: true, expected_resolution_date: resolutionDate || null } : t));
+    setTemplates((prev) => prev.map((t) => t.id === template.id ? { ...t, accepted: true } : t));
     toast.success("Tarefa aceita com sucesso!");
 
-    if (acceptingTask.created_by && acceptingTask.created_by !== currentUser) {
+    if (template.created_by && template.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
-      const dateStr = resolutionDate ? new Date(resolutionDate + "T00:00:00").toLocaleDateString('pt-BR') : "Sem prazo definido";
-      
-      await safeSendNotification(
-        acceptingTask.created_by,
-        "Tarefa Aceita e com Prazo",
-        `${senderName} aceitou e iniciou a tarefa "${acceptingTask.title}". Previsão de resolução: ${dateStr}`,
-        acceptingTask.id
-      );
+      await safeSendNotification(template.created_by, "Tarefa Aceita", `${senderName} aceitou e iniciou a tarefa: "${template.title}"`);
     }
-    
-    setAcceptingTask(null);
-    setResolutionDate("");
   }
 
   async function handleCheckClick(template: Template) {
@@ -807,7 +743,7 @@ export default function ChecklistPage() {
     const tmpl = templates.find(t => t.id === templateId);
     if (tmpl && tmpl.created_by && tmpl.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
-      await safeSendNotification(tmpl.created_by, "Tarefa Concluída", `${senderName} concluiu a tarefa: "${tmpl.title}"`, templateId);
+      await safeSendNotification(tmpl.created_by, "Tarefa Concluída", `${senderName} concluiu a tarefa: "${tmpl.title}"`);
     }
   }
 
@@ -854,7 +790,7 @@ export default function ChecklistPage() {
     setOneTimeDueDate(template.due_date ? template.due_date.split("T")[0] : "");
     
     const currentSubs = subtasks[template.id] || [];
-    setOneTimeFormSubtasks(currentSubs.map(s => ({ title: s.title, assigned_to: s.assigned_to ?? null })));
+    setOneTimeFormSubtasks(currentSubs.map(s => ({ title: s.title, assigned_to: s.assigned_to || null })));
     setShowOneTimeModal(true);
   }
 
@@ -864,7 +800,7 @@ export default function ChecklistPage() {
 
     setIsSavingTask(true);
 
-    const targetUser = oneTimeAssignedTo || null;
+    const targetUser = isColaborador ? currentUser : (oneTimeAssignedTo || null);
     const payload = {
       title: oneTimeTitle, 
       description: oneTimeDesc, 
@@ -880,9 +816,9 @@ export default function ChecklistPage() {
 
     let result;
     if (editingOneTimeId) {
-      result = await supabase.from("daily_checklist_templates").update(payload).eq("id", editingOneTimeId).select().single();
+       result = await supabase.from("daily_checklist_templates").update(payload).eq("id", editingOneTimeId).select().single();
     } else {
-      result = await supabase.from("daily_checklist_templates").insert({ ...payload, created_by: currentUser }).select().single();
+       result = await supabase.from("daily_checklist_templates").insert({ ...payload, created_by: currentUser }).select().single();
     }
 
     if (result.error) {
@@ -899,7 +835,7 @@ export default function ChecklistPage() {
         
         const senderName = currentUserProfile?.full_name || "Alguém";
         for (const sub of subtaskInserts) {
-          if (sub.assigned_to) await safeSendNotification(sub.assigned_to, "Nova pergunta / aprovação", `${senderName} marcou-o: "${sub.title}"`, data.id);
+           if (sub.assigned_to) await safeSendNotification(sub.assigned_to, "Nova pergunta / aprovação", `${senderName} marcou-o: "${sub.title}"`);
         }
         
         fetchSubtasks([data.id]);
@@ -914,7 +850,7 @@ export default function ChecklistPage() {
         
         if (targetUser && targetUser !== currentUser) {
           const senderName = currentUserProfile?.full_name || "Alguém";
-          await safeSendNotification(targetUser, "Nova Tarefa Recebida", `${senderName} enviou uma tarefa: "${data.title}"`, data.id);
+          await safeSendNotification(targetUser, "Nova Tarefa Recebida", `${senderName} enviou uma tarefa: "${data.title}"`);
         }
       }
       
@@ -984,7 +920,7 @@ export default function ChecklistPage() {
     toast.success("Excluído com sucesso.");
   }
 
-  const userName = (id: string | null | undefined) => {
+  const userName = (id: string | null) => {
     if (!id) return "Todos / Equipe";
     const u = users.find((x) => x.id === id);
     return u?.full_name || u?.email || "—";
@@ -1014,7 +950,7 @@ export default function ChecklistPage() {
         }
       }
 
-      if (isGerente || isAnalista) {
+      if (isGestor) {
         const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
         const subtaskAssignedToMe = (subtasks[t.id] || []).some(s => s.assigned_to === currentUser);
         const messageAssignedToMe = (taskMessages[t.id] || []).some(m => m.user_id === currentUser);
@@ -1035,11 +971,11 @@ export default function ChecklistPage() {
       }
       return false;
     });
-  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGerente, isAnalista, users, currentUser, subtasks, taskMessages]);
+  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGestor, users, currentUser, subtasks, taskMessages]);
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
-  const baseFilteredTasks = useMemo(() => {
+  const visibleTasks = useMemo(() => {
     return dueInRange.filter((t) => {
       const itemSubs = subtasks[t.id] || [];
       const itemMsgs = taskMessages[t.id] || [];
@@ -1060,13 +996,9 @@ export default function ChecklistPage() {
         if (!assignedToMe && t.assigned_to) return false;
       }
 
-      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa;
+      return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa && (!hideCompleted || !isDone(t));
     });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, currentUser]);
-
-  const visibleTasks = useMemo(() => {
-    return baseFilteredTasks.filter((t) => !hideCompleted || !isDone(t));
-  }, [baseFilteredTasks, hideCompleted, logs]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, hideCompleted, logs, currentUser]);
 
   const routineTasks = useMemo(() => visibleTasks.filter(t => !t.is_one_time), [visibleTasks]);
   const oneOffTasks = useMemo(() => visibleTasks.filter(t => t.is_one_time), [visibleTasks]);
@@ -1082,107 +1014,57 @@ export default function ChecklistPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [currentTabTasks]);
 
-  const currentTabBaseTasks = activeTab === "daily" ? baseFilteredTasks.filter(t => !t.is_one_time) : activeTab === "tasks" ? baseFilteredTasks.filter(t => t.is_one_time) : [];
-  const doneCount = currentTabBaseTasks.filter(isDone).length;
-  const totalCount = currentTabBaseTasks.length;
+  const doneCount = currentTabTasks.filter(isDone).length;
+  const totalCount = currentTabTasks.length;
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
-  const detailedHrReport = useMemo(() => {
-    const rows: Array<{
-      id: string;
-      name: string;
-      email: string | null;
-      totalAssigned: number;
-      completed: number;
-      pending: number;
-      onTime: number;
-      delayed: number;
-      overduePending: number;
-      completionRate: number;
-    }> = [];
+  const report = useMemo(() => {
+    const targetUsersForReport = visibleUsers;
+    const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
 
-    visibleUsers.forEach(u => {
-      const userTasks = dueInRange.filter(t => t.assigned_to === u.id);
-      let completed = 0;
-      let onTime = 0;
-      let delayed = 0;
-      let overduePending = 0;
-
-      userTasks.forEach(t => {
-        const log = logs[t.id];
-        const isFinished = !!log?.completed;
-
-        if (isFinished) {
-          completed++;
-          const deadline = t.due_date || t.expected_resolution_date;
-          const finishedDate = log.completed_at ? toLocalDateString(log.completed_at) : log.date;
-          
-          if (!deadline || finishedDate <= deadline) {
-            onTime++;
-          } else {
-            delayed++;
-          }
-        } else {
-          const deadline = t.due_date || t.expected_resolution_date;
-          if (deadline && deadline < todayStr) {
-            overduePending++;
-          }
-        }
-      });
-
-      const pending = userTasks.length - completed;
-      const completionRate = userTasks.length ? Math.round((completed / userTasks.length) * 100) : 0;
-
+    targetUsersForReport.forEach(u => {
+      const userTasks = visibleTasks.filter(t => t.assigned_to === u.id);
+      let done = 0;
+      userTasks.forEach(t => { if (isDone(t)) done++; });
       rows.push({
         id: u.id,
-        name: u.full_name || u.email || "Usuário",
-        email: u.email,
-        totalAssigned: userTasks.length,
-        completed,
-        pending,
-        onTime,
-        delayed,
-        overduePending,
-        completionRate,
+        total: userTasks.length,
+        done: done,
+        pending: userTasks.filter(t => !isDone(t))
       });
     });
 
-    return rows.sort((a, b) => b.totalAssigned - a.totalAssigned);
-  }, [visibleUsers, dueInRange, logs, todayStr]);
+    return rows.sort((a, b) => b.total - a.total);
+  }, [visibleUsers, visibleTasks, logs]);
 
   const rhReportData = useMemo(() => {
     let totalAssigned = 0;
     let totalCompleted = 0;
     let totalNotDone = 0;
-    let totalOnTime = 0;
 
-    detailedHrReport.forEach(r => {
-      totalAssigned += r.totalAssigned;
-      totalCompleted += r.completed;
-      totalNotDone += r.pending;
-      totalOnTime += r.onTime;
+    templates.forEach(t => {
+      const assignedUser = users.find(u => u.id === t.assigned_to);
+      const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
+      if (isAlmeidaGabriel) return;
+
+      totalAssigned++;
+      if (logs[t.id]?.completed) {
+        totalCompleted++;
+      } else {
+        totalNotDone++;
+      }
     });
 
     const uncompletedIndex = totalAssigned > 0 ? Math.round((totalNotDone / totalAssigned) * 100) : 0;
-    const onTimeRate = totalCompleted > 0 ? Math.round((totalOnTime / totalCompleted) * 100) : 0;
 
     return {
       totalAssigned,
       totalCompleted,
       totalNotDone,
-      onTimeRate,
+      avgAcceptTimeHours: "0",
       uncompletedIndex,
     };
-  }, [detailedHrReport]);
-
-  const report = useMemo(() => {
-    return detailedHrReport.map(r => ({
-      id: r.id,
-      total: r.totalAssigned,
-      done: r.completed,
-      pending: dueInRange.filter(t => t.assigned_to === r.id && !isDone(t))
-    }));
-  }, [detailedHrReport, dueInRange, logs]);
+  }, [templates, logs, users]);
 
   const manageList = useMemo(() => {
     let filtered = templates.filter((t) => !t.is_one_time);
@@ -1196,20 +1078,18 @@ export default function ChecklistPage() {
   const tabs = [
     { id: "daily" as const, label: "Rotinas Diárias", icon: CheckSquare },
     { id: "tasks" as const, label: "Gerenciamento de Tarefas", icon: ListTodo },
-    ...(isPrivileged ? [
+    ...(!isColaborador ? [
       { id: "reports" as const, label: "Acompanhamento", icon: Users },
-      ...(canAccessHRReport ? [{ id: "rh_report" as const, label: "Relatório RH", icon: BarChart3 }] : []),
+      { id: "rh_report" as const, label: "Relatório RH", icon: BarChart3 },
       { id: "manage" as const, label: "Gerenciar Rotinas", icon: Repeat }
     ] : []),
   ];
 
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
+  const todayStr = todayLocal();
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      {/* Gerenciador de Push Notifications inserido aqui */}
-      <PushNotificationManager />
-
       {/* Header e Filtros */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -1222,7 +1102,7 @@ export default function ChecklistPage() {
               : activeTab === "tasks" 
                 ? "Gestão de tarefas pontuais, pedidos e aprovações com prazos." 
                 : activeTab === "rh_report"
-                  ? "Indicadores detalhados de desempenho, pontualidade e volume por colaborador."
+                  ? "Indicadores de desempenho, tempo de aceite e tarefas não realizadas (Rotinas e Tarefas)."
                   : "Gestão operacional e acompanhamento de equipe."}
           </p>
         </div>
@@ -1247,7 +1127,7 @@ export default function ChecklistPage() {
                 {notifications.length === 0 ? <p className="py-4 text-center text-xs text-slate-400">Nenhuma notificação</p> : (
                   <ul className="max-h-60 overflow-y-auto space-y-2">
                     {notifications.map((n) => (
-                      <li key={n.id} onClick={() => handleNotificationClick(n)} className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors ${n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium hover:bg-slate-100"}`}>
+                      <li key={n.id} onClick={() => markNotificationAsRead(n.id)} className={`cursor-pointer rounded-lg p-2.5 text-xs transition-colors ${n.read ? "bg-slate-50 text-slate-600" : "bg-primary/10 text-slate-900 font-medium"}`}>
                         <p className="font-semibold">{n.title}</p>
                         <p className="mt-0.5">{n.message}</p>
                         <span className="mt-1 block text-[10px] text-slate-400">{new Date(n.created_at).toLocaleString("pt-BR")}</span>
@@ -1285,7 +1165,7 @@ export default function ChecklistPage() {
             </button>
           </div>
 
-          {isPrivileged && (
+          {!isColaborador && (
             <label className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
               <Filter className="h-4 w-4 text-slate-500" />
               <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="bg-transparent outline-none max-w-[120px] truncate">
@@ -1352,24 +1232,15 @@ export default function ChecklistPage() {
                     const requiresAcceptance = t.is_one_time && t.assigned_to && !t.accepted;
                     const canAccept = requiresAcceptance && t.assigned_to === currentUser;
                     const isOverdue = t.due_date && t.due_date < todayStr && !done;
-                    const isTaskReceived = t.created_by && t.created_by !== currentUser;
 
                     return (
-                      <li 
-                        key={t.id} 
-                        id={`task-${t.id}`} 
-                        className={`flex flex-col px-4 py-4 transition-colors border-l-4 ${
-                          isTaskReceived 
-                            ? "bg-sky-50/40 border-l-sky-500" 
-                            : "bg-white border-l-emerald-500"
-                        } ${requiresAcceptance ? "bg-amber-50/30 border-l-amber-500" : ""}`}
-                      >
+                      <li key={t.id} className={`flex flex-col px-4 py-4 ${requiresAcceptance ? "bg-amber-50/30" : ""}`}>
                         <div className="flex items-start gap-3">
                           <button onClick={() => handleCheckClick(t)} disabled={togglingId === t.id} className="mt-0.5 shrink-0 disabled:opacity-50">
                             {togglingId === t.id ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : done ? <CheckCircle2 className="h-6 w-6 text-emerald-500" /> : <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />}
-                        </button>
-                        
-                        <div className="min-w-0 flex-1">
+                          </button>
+                          
+                          <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>{t.title}</p>
@@ -1378,19 +1249,12 @@ export default function ChecklistPage() {
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${done ? "bg-slate-100 text-slate-500 border-slate-200" : isOverdue ? "bg-red-50 text-red-600 border-red-200" : t.due_date === todayStr ? "bg-amber-50 text-amber-600 border-amber-200" : "bg-blue-50 text-blue-600 border-blue-200"}`}>
                                     <Clock className="h-3 w-3" /> 
                                     Prazo: {new Date(t.due_date + "T00:00:00").toLocaleDateString('pt-BR')}
-                                </span>
-                                )}
-
-                                {t.expected_resolution_date && (
-                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${done ? "bg-slate-100 text-slate-500 border-slate-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
-                                    <Clock className="h-3 w-3" /> 
-                                    Previsão de entrega: {new Date(t.expected_resolution_date + "T00:00:00").toLocaleDateString('pt-BR')}
-                                </span>
+                                  </span>
                                 )}
                               </div>
                               
                               <div className="flex items-center gap-2">
-                                {t.is_one_time && (t.created_by === currentUser || isPrivileged) && !done && (
+                                {t.is_one_time && (t.created_by === currentUser || !isColaborador) && !done && (
                                   <button onClick={() => handleEditOneTimeTask(t)} className="text-slate-400 hover:text-slate-700 bg-slate-50 px-2 py-1 rounded" title="Editar Tarefa">
                                     <Pencil className="h-4 w-4" />
                                   </button>
@@ -1401,497 +1265,400 @@ export default function ChecklistPage() {
                                   {itemMsgs.length > 0 && <span className="flex items-center gap-0.5"><MessageSquare className="h-3 w-3" /> {itemMsgs.length}</span>}
                                   {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                 </button>
+                              </div>
                             </div>
-                          </div>
 
-                          {t.description && <p className="mt-1 text-sm text-slate-500">{t.description}</p>}
-                          
-                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                            <span className="flex items-center gap-1 text-primary/80 font-medium"><Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas"}</span>
-                            {t.setor && <span className="flex items-center gap-1 text-indigo-600 font-medium"><Briefcase className="h-3.5 w-3.5" /> {t.setor}</span>}
-                            <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}</span>
+                            {t.description && <p className="mt-1 text-sm text-slate-500">{t.description}</p>}
                             
-                            {isTaskReceived ? (
-                              <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
-                                <ArrowUpRight className="h-3 w-3 rotate-180" /> Recebida de: {userName(t.created_by)}
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
-                                <ArrowUpRight className="h-3 w-3" /> Enviado por: {userName(t.created_by)}
-                            </span>
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                              <span className="flex items-center gap-1 text-primary/80 font-medium"><Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas"}</span>
+                              {t.setor && <span className="flex items-center gap-1 text-indigo-600 font-medium"><Briefcase className="h-3.5 w-3.5" /> {t.setor}</span>}
+                              <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}</span>
+                              {t.created_by && <span className="flex items-center gap-1 text-amber-700 font-medium"><ArrowUpRight className="h-3.5 w-3.5" /> Enviado por: {userName(t.created_by)}</span>}
+                            </div>
+
+                            {requiresAcceptance && !done && (
+                              <div className="mt-3 flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                                <div className="text-xs text-amber-800">
+                                  <span className="font-semibold block mb-0.5">Tarefa aguardando aceite</span>
+                                  Para iniciar e conseguir concluir os passos, o responsável precisa aceitar a tarefa.
+                                </div>
+                                {canAccept && (
+                                  <button onClick={() => handleAcceptTask(t)} disabled={togglingId === t.id} className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors">
+                                    {togglingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
+                                    Aceitar Tarefa
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            {isExpanded && (
+                              <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
+                                {/* Seção 1: Passos e Perguntas Operacionais (Checklist) */}
+                                <div>
+                                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Perguntas e Passos da Tarefa</p>
+                                  {itemSubtasks.length === 0 ? (
+                                    <p className="text-xs text-slate-400 mb-2">Nenhum passo obrigatório adicionado.</p>
+                                  ) : (
+                                    <ul className="space-y-2 mb-3">
+                                      {itemSubtasks.map((sub) => (
+                                        <li key={sub.id} className="flex items-center justify-between rounded-lg bg-white p-2.5 border border-slate-200 shadow-sm">
+                                          <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
+                                            <input 
+                                              type="checkbox" 
+                                              disabled={!!(requiresAcceptance && !canAccept)} 
+                                              checked={sub.completed} 
+                                              onChange={() => { if(requiresAcceptance && !canAccept) { toast.info("Responsável precisa aceitar a tarefa primeiro."); return; } handleToggleSubtask(sub); }} 
+                                              className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary shrink-0 disabled:opacity-50" 
+                                            />
+                                            <span className={`break-words text-sm font-semibold ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                                              {sub.title}
+                                              {sub.assigned_to && (
+                                                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 border border-indigo-100">
+                                                  <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
+                                                </span>
+                                              )}
+                                            </span>
+                                          </label>
+                                          <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  <div className="pt-2">
+                                    <MentionInput
+                                      value={newSubtaskTexts[t.id] || ""}
+                                      onChange={(val) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: val }))}
+                                      onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId)}
+                                      users={users}
+                                      placeholder="Adicionar passo ou pergunta obrigatória... (Use @ para direcionar)"
+                                      buttonLabel="Adicionar Passo"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Seção 2: Chat Geral / Histórico de Mensagens */}
+                                <div className="pt-4 border-t border-slate-200">
+                                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
+                                  {itemMsgs.length === 0 ? (
+                                    <p className="text-xs text-slate-400 mb-3">Nenhuma mensagem ainda.</p>
+                                  ) : (
+                                    <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
+                                      {itemMsgs.map((msg) => (
+                                        <div key={msg.id} className="rounded-lg bg-white p-2.5 border border-slate-200 text-xs shadow-sm">
+                                          <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                                            <span className="flex items-center gap-1.5 text-primary">
+                                              <UserIcon className="h-3 w-3" /> {userName(msg.user_id)}
+                                            </span>
+                                            <span className="text-[10px] text-slate-400 font-normal">
+                                              {new Date(msg.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
+                                            </span>
+                                          </div>
+                                          <p className="text-slate-700 whitespace-pre-wrap pl-4">
+                                            {(() => {
+                                              const names = users.map(u => u.full_name || u.email).filter(Boolean);
+                                              if (names.length === 0) return msg.message;
+                                              const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
+                                              return msg.message.split(regex).map((part, i) => 
+                                                part.match(regex) ? (
+                                                  <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
+                                                    {part}
+                                                  </span>
+                                                ) : (
+                                                  part
+                                                )
+                                              );
+                                            })()}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <MentionInput
+                                    value={taskMessageInputs[t.id] || ""}
+                                    onChange={(val) => setTaskMessageInputs(prev => ({ ...prev, [t.id]: val }))}
+                                    onSubmit={(text, assignedToId) => handleAddTaskMessage(t.id, text, assignedToId)}
+                                    users={users}
+                                    placeholder="Escreva uma mensagem... (Use @ para marcar alguém)"
+                                    buttonLabel="Enviar"
+                                    isComment={true}
+                                  />
+                                </div>
+                              </div>
                             )}
                           </div>
-
-                          {requiresAcceptance && !done && (
-                            <div className="mt-3 flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                              <div className="text-xs text-amber-800">
-                                <span className="font-semibold block mb-0.5">Tarefa aguardando aceite</span>
-                                Para iniciar e conseguir concluir os passos, o responsável precisa aceitar a tarefa.
-                              </div>
-                              {canAccept && (
-                                <button 
-                                  onClick={() => { 
-                                    setAcceptingTask(t); 
-                                    setResolutionDate(t.due_date || todayLocal()); 
-                                  }} 
-                                  disabled={togglingId === t.id} 
-                                  className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors"
-                                >
-                                  {togglingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
-                                  Aceitar Tarefa
-                                </button>
-                              )}
-                          </div>
-                          )}
-
-                          {isExpanded && (
-                            <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
-                              <div>
-                                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Perguntas e Passos da Tarefa</p>
-                                {itemSubtasks.length === 0 ? (
-                                  <p className="text-xs text-slate-400 mb-2">Nenhum passo obrigatório adicionado.</p>
-                              ) : (
-                                <ul className="space-y-2 mb-3">
-                                  {itemSubtasks.map((sub) => (
-                                    <li key={sub.id} className="flex items-center justify-between rounded-lg bg-white p-2.5 border border-slate-200 shadow-sm">
-                                      <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
-                                        <input 
-                                          type="checkbox" 
-                                          disabled={!!(requiresAcceptance && !canAccept)} 
-                                          checked={sub.completed} 
-                                          onChange={() => { if(requiresAcceptance && !canAccept) { toast.info("Responsável precisa aceitar a tarefa primeiro."); return; } handleToggleSubtask(sub); }} 
-                                          className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary shrink-0 disabled:opacity-50" 
-                                        />
-                                        <span className={`break-words text-sm font-semibold ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
-                                          {sub.title}
-                                          {sub.assigned_to && (
-                                            <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 border border-indigo-100">
-                                              <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
-                                            </span>
-                                          )}
-                                      </span>
-                                    </label>
-                                    <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}\
-                            <div className="pt-2">
-                              <MentionInput
-                                value={newSubtaskTexts[t.id] || ""}
-                                onChange={(val) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: val }))}
-                                onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId ?? null)}
-                                users={users}
-                                placeholder="Adicionar passo ou pergunta obrigatória... (Use @ para direcionar)"
-                                buttonLabel="Adicionar Passo"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="pt-4 border-t border-slate-200">
-                            <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
-                            {itemMsgs.length === 0 ? (
-                              <p className="text-xs text-slate-400 mb-3">Nenhuma mensagem ainda.</p>
-                            ) : (
-                              <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
-                                {itemMsgs.map((msg) => (
-                                  <div key={msg.id} className="rounded-lg bg-white p-2.5 border border-slate-200 text-xs shadow-sm">
-                                    <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
-                                      <span className="flex items-center gap-1.5 text-primary">
-                                        <UserIcon className="h-3 w-3" /> {userName(msg.user_id)}
-                                      </span>
-                                      <span className="text-[10px] text-slate-400 font-normal">
-                                        {new Date(msg.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
-                                    </span>
-                                  </div>
-                                  <p className="text-slate-700 whitespace-pre-wrap pl-4">
-                                    {(() => {
-                                      const names = users.map(u => u.full_name || u.email).filter(Boolean);
-                                      if (names.length === 0) return msg.message;
-                                      const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
-                                      return msg.message.split(regex).map((part, i) => 
-                                        part.match(regex) ? (
-                                          <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
-                                            {part}
-                                          </span>
-                                        ) : (
-                                          part
-                                        )
-                                      );
-                                    })()}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          <MentionInput
-                            value={taskMessageInputs[t.id] || ""}
-                            onChange={(val) => setTaskMessageInputs(prev => ({ ...prev, [t.id]: val }))}
-                            onSubmit={(text, assignedToId) => handleAddTaskMessage(t.id, text, assignedToId ?? null)}
-                            users={users}
-                            placeholder="Escreva uma mensagem... (Use @ para marcar alguém)"
-                            buttonLabel="Enviar"
-                            isComment={true}
-                          />
                         </div>
-                      </div>
-                    )}
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ))
-        )}
-      </div>
-    )}
-
-    {/* Relatório para RH Completo e Individualizado */}
-    {activeTab === "rh_report" && canAccessHRReport && (
-      <div className="space-y-6">
-        <div className="grid gap-4 sm:grid-cols-4">
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total de Demandas</span>
-            <p className="mt-2 text-3xl font-bold text-slate-900">{rhReportData.totalAssigned}</p>
-            <p className="mt-1 text-xs text-slate-400">Rotinas e tarefas no período.</p>
-          </div>
-
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Taxa de Entrega no Prazo</span>
-            <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.onTimeRate}%</p>
-            <p className="mt-1 text-xs text-slate-400">Entregues sem ultrapassar o prazo.</p>
-          </div>
-
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Pendências</span>
-            <p className={`mt-2 text-3xl font-bold ${rhReportData.uncompletedIndex > 30 ? "text-red-600" : "text-amber-600"}`}>{rhReportData.uncompletedIndex}%</p>
-            <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} itens pendentes.</p>
-          </div>
-
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Concluídas</span>
-            <p className="mt-2 text-3xl font-bold text-primary">{rhReportData.totalCompleted}</p>
-            <p className="mt-1 text-xs text-slate-400">Itens finalizados pela equipe.</p>
-          </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))
+          )}
         </div>
+      )}
 
-        <div className="rounded-xl border bg-white p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-semibold text-slate-800">Desempenho Individualizado da Equipe</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Visão detalhada por colaborador: volume, pontualidade nas entregas e pendências vencidas.</p>
+      {/* Aba de Relatório para RH */}
+      {activeTab === "rh_report" && !isColaborador && (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tempo Médio de Aceite</span>
+              <p className="mt-2 text-3xl font-bold text-slate-900">N/D</p>
+              <p className="mt-1 text-xs text-slate-400">Indicador em atualização.</p>
+            </div>
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Não Realizadas</span>
+              <p className={`mt-2 text-3xl font-bold ${rhReportData.uncompletedIndex > 30 ? "text-red-600" : "text-amber-600"}`}>{rhReportData.uncompletedIndex}%</p>
+              <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} de {rhReportData.totalAssigned} rotinas e tarefas pendentes.</p>
+            </div>
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Concluídas</span>
+              <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.totalCompleted} <span className="text-sm font-normal text-slate-500">itens</span></p>
+              <p className="mt-1 text-xs text-slate-400">Total de entregas (rotinas + tarefas).</p>
             </div>
           </div>
 
-          <div className="divide-y overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-600">
-              <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold">
-                <tr>
-                  <th className="p-3">Colaborador</th>
-                  <th className="p-3 text-center">Atribuídas</th>
-                  <th className="p-3 text-center">Concluídas</th>
-                  <th className="p-3 text-center text-emerald-700">No Prazo</th>
-                  <th className="p-3 text-center text-amber-600">Com Atraso</th>
-                  <th className="p-3 text-center text-red-600">Vencidas (Aberto)</th>
-                  <th className="p-3">Taxa de Conclusão</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {detailedHrReport.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50">
-                    <td className="p-3 font-medium text-slate-900 flex items-center gap-2">
-                      <UserIcon className="h-4 w-4 text-slate-400" />
-                      <div>
-                        <p>{r.name}</p>
-                        <p className="text-[11px] text-slate-400 font-normal">{r.email || "Sem e-mail"}</p>
-                      </div>
-                    </td>
-                    <td className="p-3 text-center font-semibold">{r.totalAssigned}</td>
-                    <td className="p-3 text-center text-emerald-600 font-semibold">{r.completed}</td>
-                    <td className="p-3 text-center font-medium text-emerald-700 bg-emerald-50/50">{r.onTime}</td>
-                    <td className="p-3 text-center font-medium text-amber-600 bg-amber-50/30">{r.delayed}</td>
-                    <td className="p-3 text-center font-medium text-red-600 bg-red-50/50">{r.overduePending}</td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
-                          <div className={`h-full ${r.completionRate === 100 ? "bg-emerald-500" : r.completionRate >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${r.completionRate}%` }} />
-                        </div>
-                        <span className="text-xs font-medium">{r.completionRate}%</span>
-                      </div>
-                    </td>
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">Desempenho Individual por Colaborador (Rotinas e Tarefas)</h3>
+            <div className="divide-y overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-600">
+                <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold">
+                  <tr>
+                    <th className="p-3">Colaborador</th>
+                    <th className="p-3">Itens Atribuídos</th>
+                    <th className="p-3">Concluídos</th>
+                    <th className="p-3">Pendentes / Não Realizados</th>
+                    <th className="p-3">Taxa de Conclusão</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y">
+                  {report.map((r) => {
+                    const pctUser = r.total ? Math.round((r.done / r.total) * 100) : 0;
+                    return (
+                      <tr key={r.id || "team"} className="hover:bg-slate-50">
+                        <td className="p-3 font-medium text-slate-900 flex items-center gap-2">
+                          <UserIcon className="h-4 w-4 text-slate-400" /> {userName(r.id)}
+                        </td>
+                        <td className="p-3">{r.total}</td>
+                        <td className="p-3 text-emerald-600 font-semibold">{r.done}</td>
+                        <td className="p-3 text-red-600 font-semibold">{r.pending.length}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
+                              <div className={`h-full ${pctUser === 100 ? "bg-emerald-500" : pctUser >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${pctUser}%` }} />
+                            </div>
+                            <span className="text-xs font-medium">{pctUser}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
-      </div>
-    )}
+      )}
 
-    {/* Tabs Reports e Manage */}
-    {activeTab === "reports" && isPrivileged && (
-      <div className="space-y-4">
-        {report.length === 0 ? (
-          <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
-            Nenhum item previsto para os filtros selecionados neste período.
-          </div>
-        ) : (
-          report.map((row) => {
-            const p = row.total ? Math.round((row.done / row.total) * 100) : 0;
-            return (
-              <div key={row.id ?? "team"} className="rounded-xl border bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <UserIcon className="h-4 w-4 text-slate-500" />
-                    <span className="font-medium text-slate-800">{userName(row.id)}</span>
-                  </div>
-                  <span className="text-sm text-slate-600">
-                    {row.done}/{row.total} · <strong className={p === 100 ? "text-emerald-600" : p >= 50 ? "text-amber-600" : "text-red-600"}>{p}%</strong>
-                  </span>
-                </div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div className={`h-full ${p === 100 ? "bg-emerald-500" : p >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${p}%` }} />
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-    )}
-
-    {activeTab === "manage" && isPrivileged && (
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
-        <form onSubmit={handleSaveTemplate} className="h-fit space-y-4 rounded-xl border bg-white p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-slate-800">{editingTemplateId ? "Editar rotina" : "Nova rotina"}</h2>
-            {editingTemplateId && <button type="button" onClick={handleCancelEdit} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>}
-          </div>
-          
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Empresa"><select value={newEmpresa} onChange={(e) => setNewEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map((e) => <option key={e} value={e}>{e}</option>)}</select></Field>
-            <Field label="Setor / Depto"><select value={newSetor} onChange={(e) => setNewSetor(e.target.value)} className={inputCls}>{SETORES.map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>
-          </div>
-          <Field label="Título *"><input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required className={inputCls} /></Field>
-          <Field label="Descrição"><textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} rows={2} className={inputCls} /></Field>
-          
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Categoria"><select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-            <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
-          </div>
-          
-          <Field label="Recorrência">
-            <select value={newRecurrenceType} onChange={(e) => setNewRecurrenceType(e.target.value as RecurrenceType)} className={inputCls}>
-              {(Object.keys(RECURRENCE_LABEL) as RecurrenceType[]).map((r) => <option key={r} value={r}>{RECURRENCE_LABEL[r]}</option>)}
-            </select>
-          </Field>
-
-          {/* Bloco de Dias Específicos */}
-          {newRecurrenceType === "custom" && (
-            <div className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">Selecione os dias da semana</span>
-              <div className="flex flex-wrap gap-1.5">
-                {DAYS_OF_WEEK.map((d) => {
-                  const selected = newCustomDays.includes(d.value);
-                  return (
-                    <button
-                      key={d.value}
-                      type="button"
-                      onClick={() => handleToggleCustomDay(d.value)}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${
-                        selected 
-                          ? "bg-primary text-white border-primary" 
-                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-                      }`}
-                    >
-                      {d.label}
-                    </button>
-                  );
-                })}
-              </div>
+      {/* Tabs Reports e Manage */}
+      {activeTab === "reports" && !isColaborador && (
+        <div className="space-y-4">
+          {report.length === 0 ? (
+            <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
+              Nenhum item previsto para os filtros selecionados neste período.
             </div>
-          )}
-
-          {/* Bloco de Recorrência Mensal */}
-          {newRecurrenceType === "monthly" && (
-            <Field label="Dia do mês">
-              <input 
-                type="number" 
-                min="1" 
-                max="31" 
-                value={newRecurrenceDay} 
-                onChange={(e) => setNewRecurrenceDay(Number(e.target.value))} 
-                className={inputCls} 
-              />
-            </Field>
-          )}
-
-          <div className="space-y-2 rounded-lg bg-slate-50 p-3">
-            <span className="text-sm font-medium text-slate-700">Subtarefas Padrão</span>
-            {formSubtasks.length > 0 && (
-              <ul className="mb-2 space-y-1">
-                {formSubtasks.map((st, idx) => (
-                  <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
-                    <div className="flex items-center gap-2 truncate">
-                      <span className="truncate">{st.title}</span>
-                      {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
+          ) : (
+            report.map((row) => {
+              const p = row.total ? Math.round((row.done / row.total) * 100) : 0;
+              return (
+                <div key={row.id ?? "team"} className="rounded-xl border bg-white p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <UserIcon className="h-4 w-4 text-slate-500" />
+                      <span className="font-medium text-slate-800">{userName(row.id)}</span>
                     </div>
-                    <button type="button" onClick={() => setFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <MentionInput
-               value={formSubtaskInput}
-               onChange={setFormSubtaskInput}
-               onSubmit={(text, assignedToId) => {
-                setFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
-                setFormSubtaskInput("");
-              }}
-              users={visibleUsers}
-              placeholder="Ex: Verificar portas (Use @...)"
-            />
-          </div>
-          <button type="submit" disabled={savingTemplate} className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-60">
-            {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : editingTemplateId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            {editingTemplateId ? "Salvar alterações" : "Adicionar rotina"}
-          </button>
-        </form>
+                    <span className="text-sm text-slate-600">
+                      {row.done}/{row.total} · <strong className={p === 100 ? "text-emerald-600" : p >= 50 ? "text-amber-600" : "text-red-600"}>{p}%</strong>
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div className={`h-full ${p === 100 ? "bg-emerald-500" : p >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${p}%` }} />
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
 
-        <div className="overflow-hidden rounded-xl border bg-white">
-          <header className="flex justify-between items-center border-b bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700">
-        	  <span>Rotinas cadastradas ({manageList.length})</span>
-      	  </header>
-      	  <ul className="divide-y max-h-[700px] overflow-y-auto">
-      	    {manageList.map((t) => (
-      	      <li key={t.id} className={`flex items-start gap-3 px-4 py-3 ${editingTemplateId === t.id ? "bg-primary/5" : ""}`}>
-      	        <div className="min-w-0 flex-1">
-      	          <p className="font-medium text-slate-800">{t.title}</p>
-      	          <p className="mt-0.5 text-xs text-slate-500">{t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}</p>
-      	        </div>
-      	        <button onClick={() => handleStartEdit(t)} className="rounded p-1.5 text-slate-500 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
-      	        <button onClick={() => setDeletingTemplate(t)} className="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
-      	      </li>
-      	    ))}
-      	  </ul>
-    	  </div>
-      </div>
-    )}
-
-    {/* Modal Concluir Tarefa que exige Foto/Valor */}
-    {completingTemplate && (
-      <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
-        <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
-          {completingTemplate.requires_input && <Field label={`${completingTemplate.input_label || "Valor"} *`}><input value={inputValue} onChange={(e) => setInputValue(e.target.value)} autoFocus className={inputCls} /></Field>}
-          {completingTemplate.requires_photo && <Field label="Foto *"><input type="file" accept="image/*" capture="environment" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm" /></Field>}
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setCompletingTemplate(null)} disabled={uploading} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-            <button type="submit" disabled={uploading} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Concluir
-            </button>
-          </div>
-        </form>
-      </Modal>
-    )}
-
-    {/* Modal de Aceite com Definição de Prazo */}
-    {acceptingTask && (
-      <Modal title="Definir prazo de resolução" onClose={() => setAcceptingTask(null)}>
-        <form onSubmit={confirmAcceptTask} className="space-y-4">
-          <p className="text-sm text-slate-600">
-            Informe ao solicitante quando prevê concluir esta tarefa.
-          </p>
-          <Field label="Data prevista para conclusão *">
-            <input 
-              type="date" 
-              value={resolutionDate} 
-              onChange={(e) => setResolutionDate(e.target.value)} 
-              className={inputCls} 
-              required 
-            />
-          </Field>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setAcceptingTask(null)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-            <button type="submit" disabled={togglingId === acceptingTask.id} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
-              {togglingId === acceptingTask.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />} 
-              Confirmar Aceite
-            </button>
-          </div>
-        </form>
-      </Modal>
-    )}
-
-    {/* Modal Nova Tarefa Extra (ou Edição) com Permissão de Escolha de Responsável */}
-    {showOneTimeModal && (
-      <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
-        <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
-            <Field label="Setor / Depto"><select value={oneTimeSetor} onChange={(e) => setOneTimeSetor(e.target.value)} className={inputCls}>{SETORES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
-          </div>
-          <Field label="Título *"><input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} placeholder="Ex: Orçamento confraternização" /></Field>
-          <Field label="Descrição / Detalhes"><textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} placeholder="Descreva os valores..." /></Field>
-           
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-            <Field label="Responsável">
-              <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
-                <option value="">Equipe (Sem dono)</option>
-                {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+      {activeTab === "manage" && !isColaborador && (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
+          <form onSubmit={handleSaveTemplate} className="h-fit space-y-4 rounded-xl border bg-white p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-slate-800">{editingTemplateId ? "Editar rotina" : "Nova rotina"}</h2>
+              {editingTemplateId && <button type="button" onClick={handleCancelEdit} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>}
+            </div>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Empresa"><select value={newEmpresa} onChange={(e) => setNewEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map((e) => <option key={e} value={e}>{e}</option>)}</select></Field>
+              <Field label="Setor / Depto"><select value={newSetor} onChange={(e) => setNewSetor(e.target.value)} className={inputCls}>{SETORES.map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>
+            </div>
+            <Field label="Título *"><input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required className={inputCls} /></Field>
+            <Field label="Descrição"><textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} rows={2} className={inputCls} /></Field>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Categoria"><select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+              <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
+            </div>
+            <Field label="Recorrência">
+              <select value={newRecurrenceType} onChange={(e) => setNewRecurrenceType(e.target.value as RecurrenceType)} className={inputCls}>
+                {(Object.keys(RECURRENCE_LABEL) as RecurrenceType[]).map((r) => <option key={r} value={r}>{RECURRENCE_LABEL[r]}</option>)}
               </select>
             </Field>
-          </div>
 
-          <Field label="Prazo (Data de Execução)">
-             <input type="date" value={oneTimeDueDate} onChange={(e) => setOneTimeDueDate(e.target.value)} className={inputCls} />
-          </Field>
-
-          <div className="space-y-2 rounded-lg bg-slate-50 p-3">
-            <span className="text-sm font-medium text-slate-700">Perguntas ou Passos</span>
-            {oneTimeFormSubtasks.length > 0 && (
-              <ul className="mb-2 space-y-1">
-                {oneTimeFormSubtasks.map((st, idx) => (
-                  <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
-                    <div className="flex items-center gap-2 truncate">
-                      <span className="truncate">{st.title}</span>
-                      {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
-                    </div>
-                    {!editingOneTimeId && (
-                      <button type="button" onClick={() => setOneTimeFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!editingOneTimeId && (
+            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+              <span className="text-sm font-medium text-slate-700">Subtarefas Padrão</span>
+              {formSubtasks.length > 0 && (
+                <ul className="mb-2 space-y-1">
+                  {formSubtasks.map((st, idx) => (
+                    <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="truncate">{st.title}</span>
+                        {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
+                      </div>
+                      <button type="button" onClick={() => setFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <MentionInput
-                  value={oneTimeSubInput}
-                  onChange={oneTimeSubInput => setOneTimeSubInput(oneTimeSubInput)}
-                  onSubmit={(text, assignedToId) => {
-                    setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
-                    setOneTimeSubInput("");
-                  }}
-                  users={visibleUsers}
-                  placeholder="Escreva e use @ para direcionar..."
+                 value={formSubtaskInput}
+                 onChange={setFormSubtaskInput}
+                 onSubmit={(text, assignedToId) => {
+                   setFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
+                   setFormSubtaskInput("");
+                 }}
+                 users={visibleUsers}
+                 placeholder="Ex: Verificar portas (Use @...)"
               />
-            )}
-            {editingOneTimeId && <p className="text-xs text-slate-500 italic">Adicione passos diretamente na lista de tarefas.</p>}
-          </div>
-           
-          <div className="flex justify-end gap-2 mt-2">
-            <button type="button" onClick={() => setShowOneTimeModal(false)} disabled={isSavingTask} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-            <button type="submit" disabled={isSavingTask} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
-              {isSavingTask ? <Loader2 className="h-4 w-4 animate-spin" /> : editingOneTimeId ? <Pencil className="h-4 w-4" /> : <Zap className="h-4 w-4" />} 
-              {editingOneTimeId ? "Salvar Tarefa" : "Criar tarefa"}
+            </div>
+            <button type="submit" disabled={savingTemplate} className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-60">
+              {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : editingTemplateId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              {editingTemplateId ? "Salvar alterações" : "Adicionar rotina"}
             </button>
-          </div>
-        </form>
-      </Modal>
-    )}
+          </form>
 
-    <ConfirmDialog open={!!deletingTemplate} onOpenChange={(o) => !o && setDeletingTemplate(null)} title="Excluir rotina?" description={`"${deletingTemplate?.title ?? ""}" e todo o histórico serão removidos.`} confirmLabel="Excluir" onConfirm={handleDeleteTemplate} />
-  </div>
+          <div className="overflow-hidden rounded-xl border bg-white">
+            <header className="flex justify-between items-center border-b bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700">
+              <span>Rotinas cadastradas ({manageList.length})</span>
+            </header>
+            <ul className="divide-y max-h-[700px] overflow-y-auto">
+              {manageList.map((t) => (
+                <li key={t.id} className={`flex items-start gap-3 px-4 py-3 ${editingTemplateId === t.id ? "bg-primary/5" : ""}`}>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-slate-800">{t.title}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}</p>
+                  </div>
+                  <button onClick={() => handleStartEdit(t)} className="rounded p-1.5 text-slate-500 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
+                  <button onClick={() => setDeletingTemplate(t)} className="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Concluir Tarefa que exige Foto/Valor */}
+      {completingTemplate && (
+        <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
+          <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
+            {completingTemplate.requires_input && <Field label={`${completingTemplate.input_label || "Valor"} *`}><input value={inputValue} onChange={(e) => setInputValue(e.target.value)} autoFocus className={inputCls} /></Field>}
+            {completingTemplate.requires_photo && <Field label="Foto *"><input type="file" accept="image/*" capture="environment" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm" /></Field>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setCompletingTemplate(null)} disabled={uploading} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+              <button type="submit" disabled={uploading} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Concluir
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal Nova Tarefa Extra (ou Edição) com Proteção contra Duplo Clique */}
+      {showOneTimeModal && (
+        <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
+          <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
+              <Field label="Setor / Depto"><select value={oneTimeSetor} onChange={(e) => setOneTimeSetor(e.target.value)} className={inputCls}>{SETORES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
+            </div>
+            <Field label="Título *"><input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} placeholder="Ex: Orçamento confraternização" /></Field>
+            <Field label="Descrição / Detalhes"><textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} placeholder="Descreva os valores..." /></Field>
+            
+            <div className={`grid gap-3 ${isColaborador ? "" : "grid-cols-2"}`}>
+              <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+              {!isColaborador && (
+                <Field label="Responsável">
+                  <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
+                    <option value="">Equipe (Sem dono)</option>
+                    {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+                  </select>
+                </Field>
+              )}
+            </div>
+
+            <Field label="Prazo (Data de Execução)">
+               <input type="date" value={oneTimeDueDate} onChange={(e) => setOneTimeDueDate(e.target.value)} className={inputCls} />
+            </Field>
+
+            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+              <span className="text-sm font-medium text-slate-700">Perguntas ou Passos</span>
+              {oneTimeFormSubtasks.length > 0 && (
+                <ul className="mb-2 space-y-1">
+                  {oneTimeFormSubtasks.map((st, idx) => (
+                    <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="truncate">{st.title}</span>
+                        {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
+                      </div>
+                      {!editingOneTimeId && (
+                        <button type="button" onClick={() => setOneTimeFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!editingOneTimeId && (
+                <MentionInput
+                   value={oneTimeSubInput}
+                   onChange={oneTimeSubInput => setOneTimeSubInput(oneTimeSubInput)}
+                   onSubmit={(text, assignedToId) => {
+                     setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId }]);
+                     setOneTimeSubInput("");
+                   }}
+                   users={visibleUsers}
+                   placeholder="Escreva e use @ para direcionar..."
+                />
+              )}
+              {editingOneTimeId && <p className="text-xs text-slate-500 italic">Adicione passos diretamente na lista de tarefas.</p>}
+            </div>
+            
+            <div className="flex justify-end gap-2 mt-2">
+              <button type="button" onClick={() => setShowOneTimeModal(false)} disabled={isSavingTask} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+              <button type="submit" disabled={isSavingTask} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
+                {isSavingTask ? <Loader2 className="h-4 w-4 animate-spin" /> : editingOneTimeId ? <Pencil className="h-4 w-4" /> : <Zap className="h-4 w-4" />} 
+                {editingOneTimeId ? "Salvar Tarefa" : "Criar tarefa"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      <ConfirmDialog open={!!deletingTemplate} onOpenChange={(o) => !o && setDeletingTemplate(null)} title="Excluir rotina?" description={`"${deletingTemplate?.title ?? ""}" e todo o histórico serão removidos.`} confirmLabel="Excluir" onConfirm={handleDeleteTemplate} />
+    </div>
   );
 }
 
@@ -1899,7 +1666,7 @@ const inputCls = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 t
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block space-y-1.5"><span className="text-sm font-medium text-slate-700">{label}</span>{children}</label>; }
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center" onClick={onClose}>
       <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3"><h3 className="font-semibold text-slate-900">{title}</h3><button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button></div>
         {children}
