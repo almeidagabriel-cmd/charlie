@@ -42,6 +42,7 @@ import {
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { createClient } from "@/lib/supabase/client";
+import { PushNotificationManager } from "@/components/PushNotificationManager"; // <--- IMPORTADO AQUI
 
 // --- Tipagens ---
 interface Profile {
@@ -436,14 +437,27 @@ export default function ChecklistPage() {
     if (!userId || userId === currentUser) return;
     
     try {
+      // 1. Salva a notificação interna no banco
       await supabase.from("notifications").insert({ 
-        user_id: userId, 
-        title, 
-        message,
-        template_id: templateId || null 
+      	user_id: userId, 
+      	title, 
+      	message,
+      	template_id: templateId || null 
+      });
+
+      // 2. Dispara a Notificação Push para o navegador/dispositivo do usuário
+      await fetch("/api/send-push", {
+      	method: "POST",
+      	headers: { "Content-Type": "application/json" },
+      	body: JSON.stringify({ 
+      		userId, 
+      		title, 
+      		message, 
+      		url: "/checklist" 
+      	}),
       });
     } catch (error) {
-      console.error("[notifications] falha ao inserir:", error);
+      console.error("[notifications] falha ao enviar:", error);
     }
   }
 
@@ -866,9 +880,9 @@ export default function ChecklistPage() {
 
     let result;
     if (editingOneTimeId) {
-       result = await supabase.from("daily_checklist_templates").update(payload).eq("id", editingOneTimeId).select().single();
+      result = await supabase.from("daily_checklist_templates").update(payload).eq("id", editingOneTimeId).select().single();
     } else {
-       result = await supabase.from("daily_checklist_templates").insert({ ...payload, created_by: currentUser }).select().single();
+      result = await supabase.from("daily_checklist_templates").insert({ ...payload, created_by: currentUser }).select().single();
     }
 
     if (result.error) {
@@ -885,7 +899,7 @@ export default function ChecklistPage() {
         
         const senderName = currentUserProfile?.full_name || "Alguém";
         for (const sub of subtaskInserts) {
-           if (sub.assigned_to) await safeSendNotification(sub.assigned_to, "Nova pergunta / aprovação", `${senderName} marcou-o: "${sub.title}"`, data.id);
+          if (sub.assigned_to) await safeSendNotification(sub.assigned_to, "Nova pergunta / aprovação", `${senderName} marcou-o: "${sub.title}"`, data.id);
         }
         
         fetchSubtasks([data.id]);
@@ -1193,6 +1207,9 @@ export default function ChecklistPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      {/* Gerenciador de Push Notifications inserido aqui */}
+      <PushNotificationManager />
+
       {/* Header e Filtros */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -1350,9 +1367,9 @@ export default function ChecklistPage() {
                         <div className="flex items-start gap-3">
                           <button onClick={() => handleCheckClick(t)} disabled={togglingId === t.id} className="mt-0.5 shrink-0 disabled:opacity-50">
                             {togglingId === t.id ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : done ? <CheckCircle2 className="h-6 w-6 text-emerald-500" /> : <Circle className="h-6 w-6 text-slate-300 hover:text-primary" />}
-                          </button>
-                          
-                          <div className="min-w-0 flex-1">
+                        </button>
+                        
+                        <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>{t.title}</p>
@@ -1361,14 +1378,14 @@ export default function ChecklistPage() {
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${done ? "bg-slate-100 text-slate-500 border-slate-200" : isOverdue ? "bg-red-50 text-red-600 border-red-200" : t.due_date === todayStr ? "bg-amber-50 text-amber-600 border-amber-200" : "bg-blue-50 text-blue-600 border-blue-200"}`}>
                                     <Clock className="h-3 w-3" /> 
                                     Prazo: {new Date(t.due_date + "T00:00:00").toLocaleDateString('pt-BR')}
-                                  </span>
+                                </span>
                                 )}
 
                                 {t.expected_resolution_date && (
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${done ? "bg-slate-100 text-slate-500 border-slate-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
                                     <Clock className="h-3 w-3" /> 
                                     Previsão de entrega: {new Date(t.expected_resolution_date + "T00:00:00").toLocaleDateString('pt-BR')}
-                                  </span>
+                                </span>
                                 )}
                               </div>
                               
@@ -1384,497 +1401,497 @@ export default function ChecklistPage() {
                                   {itemMsgs.length > 0 && <span className="flex items-center gap-0.5"><MessageSquare className="h-3 w-3" /> {itemMsgs.length}</span>}
                                   {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                 </button>
-                              </div>
                             </div>
+                          </div>
 
-                            {t.description && <p className="mt-1 text-sm text-slate-500">{t.description}</p>}
+                          {t.description && <p className="mt-1 text-sm text-slate-500">{t.description}</p>}
+                          
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                            <span className="flex items-center gap-1 text-primary/80 font-medium"><Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas"}</span>
+                            {t.setor && <span className="flex items-center gap-1 text-indigo-600 font-medium"><Briefcase className="h-3.5 w-3.5" /> {t.setor}</span>}
+                            <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}</span>
                             
-                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                              <span className="flex items-center gap-1 text-primary/80 font-medium"><Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas"}</span>
-                              {t.setor && <span className="flex items-center gap-1 text-indigo-600 font-medium"><Briefcase className="h-3.5 w-3.5" /> {t.setor}</span>}
-                              <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}</span>
-                              
-                              {isTaskReceived ? (
-                                <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
-                                  <ArrowUpRight className="h-3 w-3 rotate-180" /> Recebida de: {userName(t.created_by)}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
-                                  <ArrowUpRight className="h-3 w-3" /> Enviado por: {userName(t.created_by)}
-                                </span>
-                              )}
-                            </div>
-
-                            {requiresAcceptance && !done && (
-                              <div className="mt-3 flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                                <div className="text-xs text-amber-800">
-                                  <span className="font-semibold block mb-0.5">Tarefa aguardando aceite</span>
-                                  Para iniciar e conseguir concluir os passos, o responsável precisa aceitar a tarefa.
-                                </div>
-                                {canAccept && (
-                                  <button 
-                                    onClick={() => { 
-                                      setAcceptingTask(t); 
-                                      setResolutionDate(t.due_date || todayLocal()); 
-                                    }} 
-                                    disabled={togglingId === t.id} 
-                                    className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors"
-                                  >
-                                    {togglingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
-                                    Aceitar Tarefa
-                                  </button>
-                                )}
-                              </div>
-                            )}
-
-                            {isExpanded && (
-                              <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
-                                <div>
-                                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Perguntas e Passos da Tarefa</p>
-                                  {itemSubtasks.length === 0 ? (
-                                    <p className="text-xs text-slate-400 mb-2">Nenhum passo obrigatório adicionado.</p>
-                                  ) : (
-                                    <ul className="space-y-2 mb-3">
-                                      {itemSubtasks.map((sub) => (
-                                        <li key={sub.id} className="flex items-center justify-between rounded-lg bg-white p-2.5 border border-slate-200 shadow-sm">
-                                          <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
-                                            <input 
-                                              type="checkbox" 
-                                              disabled={!!(requiresAcceptance && !canAccept)} 
-                                              checked={sub.completed} 
-                                              onChange={() => { if(requiresAcceptance && !canAccept) { toast.info("Responsável precisa aceitar a tarefa primeiro."); return; } handleToggleSubtask(sub); }} 
-                                              className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary shrink-0 disabled:opacity-50" 
-                                            />
-                                            <span className={`break-words text-sm font-semibold ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
-                                              {sub.title}
-                                              {sub.assigned_to && (
-                                                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 border border-indigo-100">
-                                                  <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
-                                                </span>
-                                              )}
-                                            </span>
-                                          </label>
-                                          <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                  <div className="pt-2">
-                                    <MentionInput
-                                      value={newSubtaskTexts[t.id] || ""}
-                                      onChange={(val) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: val }))}
-                                      onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId ?? null)}
-                                      users={users}
-                                      placeholder="Adicionar passo ou pergunta obrigatória... (Use @ para direcionar)"
-                                      buttonLabel="Adicionar Passo"
-                                    />
-                                  </div>
-                                </div>
-
-                                <div className="pt-4 border-t border-slate-200">
-                                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
-                                  {itemMsgs.length === 0 ? (
-                                    <p className="text-xs text-slate-400 mb-3">Nenhuma mensagem ainda.</p>
-                                  ) : (
-                                    <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
-                                      {itemMsgs.map((msg) => (
-                                        <div key={msg.id} className="rounded-lg bg-white p-2.5 border border-slate-200 text-xs shadow-sm">
-                                          <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
-                                            <span className="flex items-center gap-1.5 text-primary">
-                                              <UserIcon className="h-3 w-3" /> {userName(msg.user_id)}
-                                            </span>
-                                            <span className="text-[10px] text-slate-400 font-normal">
-                                              {new Date(msg.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
-                                            </span>
-                                          </div>
-                                          <p className="text-slate-700 whitespace-pre-wrap pl-4">
-                                            {(() => {
-                                              const names = users.map(u => u.full_name || u.email).filter(Boolean);
-                                              if (names.length === 0) return msg.message;
-                                              const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
-                                              return msg.message.split(regex).map((part, i) => 
-                                                part.match(regex) ? (
-                                                  <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
-                                                    {part}
-                                                  </span>
-                                                ) : (
-                                                  part
-                                                )
-                                              );
-                                            })()}
-                                          </p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  <MentionInput
-                                    value={taskMessageInputs[t.id] || ""}
-                                    onChange={(val) => setTaskMessageInputs(prev => ({ ...prev, [t.id]: val }))}
-                                    onSubmit={(text, assignedToId) => handleAddTaskMessage(t.id, text, assignedToId ?? null)}
-                                    users={users}
-                                    placeholder="Escreva uma mensagem... (Use @ para marcar alguém)"
-                                    buttonLabel="Enviar"
-                                    isComment={true}
-                                  />
-                                </div>
-                              </div>
+                            {isTaskReceived ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
+                                <ArrowUpRight className="h-3 w-3 rotate-180" /> Recebida de: {userName(t.created_by)}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
+                                <ArrowUpRight className="h-3 w-3" /> Enviado por: {userName(t.created_by)}
+                            </span>
                             )}
                           </div>
+
+                          {requiresAcceptance && !done && (
+                            <div className="mt-3 flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                              <div className="text-xs text-amber-800">
+                                <span className="font-semibold block mb-0.5">Tarefa aguardando aceite</span>
+                                Para iniciar e conseguir concluir os passos, o responsável precisa aceitar a tarefa.
+                              </div>
+                              {canAccept && (
+                                <button 
+                                  onClick={() => { 
+                                    setAcceptingTask(t); 
+                                    setResolutionDate(t.due_date || todayLocal()); 
+                                  }} 
+                                  disabled={togglingId === t.id} 
+                                  className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 shadow-sm transition-colors"
+                                >
+                                  {togglingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
+                                  Aceitar Tarefa
+                                </button>
+                              )}
+                          </div>
+                          )}
+
+                          {isExpanded && (
+                            <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
+                              <div>
+                                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Perguntas e Passos da Tarefa</p>
+                                {itemSubtasks.length === 0 ? (
+                                  <p className="text-xs text-slate-400 mb-2">Nenhum passo obrigatório adicionado.</p>
+                              ) : (
+                                <ul className="space-y-2 mb-3">
+                                  {itemSubtasks.map((sub) => (
+                                    <li key={sub.id} className="flex items-center justify-between rounded-lg bg-white p-2.5 border border-slate-200 shadow-sm">
+                                      <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
+                                        <input 
+                                          type="checkbox" 
+                                          disabled={!!(requiresAcceptance && !canAccept)} 
+                                          checked={sub.completed} 
+                                          onChange={() => { if(requiresAcceptance && !canAccept) { toast.info("Responsável precisa aceitar a tarefa primeiro."); return; } handleToggleSubtask(sub); }} 
+                                          className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary shrink-0 disabled:opacity-50" 
+                                        />
+                                        <span className={`break-words text-sm font-semibold ${sub.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                                          {sub.title}
+                                          {sub.assigned_to && (
+                                            <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 border border-indigo-100">
+                                              <UserIcon className="h-3 w-3" /> {userName(sub.assigned_to)}
+                                            </span>
+                                          )}
+                                      </span>
+                                    </label>
+                                    <button onClick={() => handleDeleteSubtask(sub)} className="text-slate-400 hover:text-red-600 p-1 bg-slate-50 rounded" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}\
+                            <div className="pt-2">
+                              <MentionInput
+                                value={newSubtaskTexts[t.id] || ""}
+                                onChange={(val) => setNewSubtaskTexts((prev) => ({ ...prev, [t.id]: val }))}
+                                onSubmit={(text, assignedToId) => handleAddSubtask(t.id, text, assignedToId ?? null)}
+                                users={users}
+                                placeholder="Adicionar passo ou pergunta obrigatória... (Use @ para direcionar)"
+                                buttonLabel="Adicionar Passo"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="pt-4 border-t border-slate-200">
+                            <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
+                            {itemMsgs.length === 0 ? (
+                              <p className="text-xs text-slate-400 mb-3">Nenhuma mensagem ainda.</p>
+                            ) : (
+                              <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
+                                {itemMsgs.map((msg) => (
+                                  <div key={msg.id} className="rounded-lg bg-white p-2.5 border border-slate-200 text-xs shadow-sm">
+                                    <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                                      <span className="flex items-center gap-1.5 text-primary">
+                                        <UserIcon className="h-3 w-3" /> {userName(msg.user_id)}
+                                      </span>
+                                      <span className="text-[10px] text-slate-400 font-normal">
+                                        {new Date(msg.created_at).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
+                                    </span>
+                                  </div>
+                                  <p className="text-slate-700 whitespace-pre-wrap pl-4">
+                                    {(() => {
+                                      const names = users.map(u => u.full_name || u.email).filter(Boolean);
+                                      if (names.length === 0) return msg.message;
+                                      const regex = new RegExp(`(@(?:${names.join('|')}))`, 'gi');
+                                      return msg.message.split(regex).map((part, i) => 
+                                        part.match(regex) ? (
+                                          <span key={i} className="text-primary font-semibold bg-primary/10 px-1.5 py-0.5 rounded-md">
+                                            {part}
+                                          </span>
+                                        ) : (
+                                          part
+                                        )
+                                      );
+                                    })()}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <MentionInput
+                            value={taskMessageInputs[t.id] || ""}
+                            onChange={(val) => setTaskMessageInputs(prev => ({ ...prev, [t.id]: val }))}
+                            onSubmit={(text, assignedToId) => handleAddTaskMessage(t.id, text, assignedToId ?? null)}
+                            users={users}
+                            placeholder="Escreva uma mensagem... (Use @ para marcar alguém)"
+                            buttonLabel="Enviar"
+                            isComment={true}
+                          />
                         </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ))
-          )}
+                      </div>
+                    )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))
+        )}
+      </div>
+    )}
+
+    {/* Relatório para RH Completo e Individualizado */}
+    {activeTab === "rh_report" && canAccessHRReport && (
+      <div className="space-y-6">
+        <div className="grid gap-4 sm:grid-cols-4">
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total de Demandas</span>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{rhReportData.totalAssigned}</p>
+            <p className="mt-1 text-xs text-slate-400">Rotinas e tarefas no período.</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Taxa de Entrega no Prazo</span>
+            <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.onTimeRate}%</p>
+            <p className="mt-1 text-xs text-slate-400">Entregues sem ultrapassar o prazo.</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Pendências</span>
+            <p className={`mt-2 text-3xl font-bold ${rhReportData.uncompletedIndex > 30 ? "text-red-600" : "text-amber-600"}`}>{rhReportData.uncompletedIndex}%</p>
+            <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} itens pendentes.</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Concluídas</span>
+            <p className="mt-2 text-3xl font-bold text-primary">{rhReportData.totalCompleted}</p>
+            <p className="mt-1 text-xs text-slate-400">Itens finalizados pela equipe.</p>
+          </div>
         </div>
-      )}
 
-      {/* Relatório para RH Completo e Individualizado */}
-      {activeTab === "rh_report" && canAccessHRReport && (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-4">
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total de Demandas</span>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{rhReportData.totalAssigned}</p>
-              <p className="mt-1 text-xs text-slate-400">Rotinas e tarefas no período.</p>
-            </div>
-
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Taxa de Entrega no Prazo</span>
-              <p className="mt-2 text-3xl font-bold text-emerald-600">{rhReportData.onTimeRate}%</p>
-              <p className="mt-1 text-xs text-slate-400">Entregues sem ultrapassar o prazo.</p>
-            </div>
-
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Índice de Pendências</span>
-              <p className={`mt-2 text-3xl font-bold ${rhReportData.uncompletedIndex > 30 ? "text-red-600" : "text-amber-600"}`}>{rhReportData.uncompletedIndex}%</p>
-              <p className="mt-1 text-xs text-slate-400">{rhReportData.totalNotDone} itens pendentes.</p>
-            </div>
-
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Concluídas</span>
-              <p className="mt-2 text-3xl font-bold text-primary">{rhReportData.totalCompleted}</p>
-              <p className="mt-1 text-xs text-slate-400">Itens finalizados pela equipe.</p>
+        <div className="rounded-xl border bg-white p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-slate-800">Desempenho Individualizado da Equipe</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Visão detalhada por colaborador: volume, pontualidade nas entregas e pendências vencidas.</p>
             </div>
           </div>
 
-          <div className="rounded-xl border bg-white p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-semibold text-slate-800">Desempenho Individualizado da Equipe</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Visão detalhada por colaborador: volume, pontualidade nas entregas e pendências vencidas.</p>
+          <div className="divide-y overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-600">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold">
+                <tr>
+                  <th className="p-3">Colaborador</th>
+                  <th className="p-3 text-center">Atribuídas</th>
+                  <th className="p-3 text-center">Concluídas</th>
+                  <th className="p-3 text-center text-emerald-700">No Prazo</th>
+                  <th className="p-3 text-center text-amber-600">Com Atraso</th>
+                  <th className="p-3 text-center text-red-600">Vencidas (Aberto)</th>
+                  <th className="p-3">Taxa de Conclusão</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {detailedHrReport.map((r) => (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className="p-3 font-medium text-slate-900 flex items-center gap-2">
+                      <UserIcon className="h-4 w-4 text-slate-400" />
+                      <div>
+                        <p>{r.name}</p>
+                        <p className="text-[11px] text-slate-400 font-normal">{r.email || "Sem e-mail"}</p>
+                      </div>
+                    </td>
+                    <td className="p-3 text-center font-semibold">{r.totalAssigned}</td>
+                    <td className="p-3 text-center text-emerald-600 font-semibold">{r.completed}</td>
+                    <td className="p-3 text-center font-medium text-emerald-700 bg-emerald-50/50">{r.onTime}</td>
+                    <td className="p-3 text-center font-medium text-amber-600 bg-amber-50/30">{r.delayed}</td>
+                    <td className="p-3 text-center font-medium text-red-600 bg-red-50/50">{r.overduePending}</td>
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
+                          <div className={`h-full ${r.completionRate === 100 ? "bg-emerald-500" : r.completionRate >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${r.completionRate}%` }} />
+                        </div>
+                        <span className="text-xs font-medium">{r.completionRate}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Tabs Reports e Manage */}
+    {activeTab === "reports" && isPrivileged && (
+      <div className="space-y-4">
+        {report.length === 0 ? (
+          <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
+            Nenhum item previsto para os filtros selecionados neste período.
+          </div>
+        ) : (
+          report.map((row) => {
+            const p = row.total ? Math.round((row.done / row.total) * 100) : 0;
+            return (
+              <div key={row.id ?? "team"} className="rounded-xl border bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <UserIcon className="h-4 w-4 text-slate-500" />
+                    <span className="font-medium text-slate-800">{userName(row.id)}</span>
+                  </div>
+                  <span className="text-sm text-slate-600">
+                    {row.done}/{row.total} · <strong className={p === 100 ? "text-emerald-600" : p >= 50 ? "text-amber-600" : "text-red-600"}>{p}%</strong>
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div className={`h-full ${p === 100 ? "bg-emerald-500" : p >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${p}%` }} />
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    )}
+
+    {activeTab === "manage" && isPrivileged && (
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
+        <form onSubmit={handleSaveTemplate} className="h-fit space-y-4 rounded-xl border bg-white p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-slate-800">{editingTemplateId ? "Editar rotina" : "Nova rotina"}</h2>
+            {editingTemplateId && <button type="button" onClick={handleCancelEdit} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>}
+          </div>
+          
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Empresa"><select value={newEmpresa} onChange={(e) => setNewEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map((e) => <option key={e} value={e}>{e}</option>)}</select></Field>
+            <Field label="Setor / Depto"><select value={newSetor} onChange={(e) => setNewSetor(e.target.value)} className={inputCls}>{SETORES.map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>
+          </div>
+          <Field label="Título *"><input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required className={inputCls} /></Field>
+          <Field label="Descrição"><textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} rows={2} className={inputCls} /></Field>
+          
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Categoria"><select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+            <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
+          </div>
+          
+          <Field label="Recorrência">
+            <select value={newRecurrenceType} onChange={(e) => setNewRecurrenceType(e.target.value as RecurrenceType)} className={inputCls}>
+              {(Object.keys(RECURRENCE_LABEL) as RecurrenceType[]).map((r) => <option key={r} value={r}>{RECURRENCE_LABEL[r]}</option>)}
+            </select>
+          </Field>
+
+          {/* Bloco de Dias Específicos */}
+          {newRecurrenceType === "custom" && (
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium text-slate-700">Selecione os dias da semana</span>
+              <div className="flex flex-wrap gap-1.5">
+                {DAYS_OF_WEEK.map((d) => {
+                  const selected = newCustomDays.includes(d.value);
+                  return (
+                    <button
+                      key={d.value}
+                      type="button"
+                      onClick={() => handleToggleCustomDay(d.value)}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${
+                        selected 
+                          ? "bg-primary text-white border-primary" 
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
-
-            <div className="divide-y overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-600">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold">
-                  <tr>
-                    <th className="p-3">Colaborador</th>
-                    <th className="p-3 text-center">Atribuídas</th>
-                    <th className="p-3 text-center">Concluídas</th>
-                    <th className="p-3 text-center text-emerald-700">No Prazo</th>
-                    <th className="p-3 text-center text-amber-600">Com Atraso</th>
-                    <th className="p-3 text-center text-red-600">Vencidas (Aberto)</th>
-                    <th className="p-3">Taxa de Conclusão</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {detailedHrReport.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-medium text-slate-900 flex items-center gap-2">
-                        <UserIcon className="h-4 w-4 text-slate-400" />
-                        <div>
-                          <p>{r.name}</p>
-                          <p className="text-[11px] text-slate-400 font-normal">{r.email || "Sem e-mail"}</p>
-                        </div>
-                      </td>
-                      <td className="p-3 text-center font-semibold">{r.totalAssigned}</td>
-                      <td className="p-3 text-center text-emerald-600 font-semibold">{r.completed}</td>
-                      <td className="p-3 text-center font-medium text-emerald-700 bg-emerald-50/50">{r.onTime}</td>
-                      <td className="p-3 text-center font-medium text-amber-600 bg-amber-50/30">{r.delayed}</td>
-                      <td className="p-3 text-center font-medium text-red-600 bg-red-50/50">{r.overduePending}</td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
-                            <div className={`h-full ${r.completionRate === 100 ? "bg-emerald-500" : r.completionRate >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${r.completionRate}%` }} />
-                          </div>
-                          <span className="text-xs font-medium">{r.completionRate}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tabs Reports e Manage */}
-      {activeTab === "reports" && isPrivileged && (
-        <div className="space-y-4">
-          {report.length === 0 ? (
-            <div className="rounded-xl border border-dashed bg-white py-14 text-center text-sm text-slate-500">
-              Nenhum item previsto para os filtros selecionados neste período.
-            </div>
-          ) : (
-            report.map((row) => {
-              const p = row.total ? Math.round((row.done / row.total) * 100) : 0;
-              return (
-                <div key={row.id ?? "team"} className="rounded-xl border bg-white p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <UserIcon className="h-4 w-4 text-slate-500" />
-                      <span className="font-medium text-slate-800">{userName(row.id)}</span>
-                    </div>
-                    <span className="text-sm text-slate-600">
-                      {row.done}/{row.total} · <strong className={p === 100 ? "text-emerald-600" : p >= 50 ? "text-amber-600" : "text-red-600"}>{p}%</strong>
-                    </span>
-                  </div>
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div className={`h-full ${p === 100 ? "bg-emerald-500" : p >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${p}%` }} />
-                  </div>
-                </div>
-              );
-            })
           )}
-        </div>
-      )}
 
-      {activeTab === "manage" && isPrivileged && (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
-          <form onSubmit={handleSaveTemplate} className="h-fit space-y-4 rounded-xl border bg-white p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-slate-800">{editingTemplateId ? "Editar rotina" : "Nova rotina"}</h2>
-              {editingTemplateId && <button type="button" onClick={handleCancelEdit} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>}
-            </div>
-            
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Empresa"><select value={newEmpresa} onChange={(e) => setNewEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map((e) => <option key={e} value={e}>{e}</option>)}</select></Field>
-              <Field label="Setor / Depto"><select value={newSetor} onChange={(e) => setNewSetor(e.target.value)} className={inputCls}>{SETORES.map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>
-            </div>
-            <Field label="Título *"><input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required className={inputCls} /></Field>
-            <Field label="Descrição"><textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} rows={2} className={inputCls} /></Field>
-            
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Categoria"><select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-              <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
-            </div>
-            
-            <Field label="Recorrência">
-              <select value={newRecurrenceType} onChange={(e) => setNewRecurrenceType(e.target.value as RecurrenceType)} className={inputCls}>
-                {(Object.keys(RECURRENCE_LABEL) as RecurrenceType[]).map((r) => <option key={r} value={r}>{RECURRENCE_LABEL[r]}</option>)}
+          {/* Bloco de Recorrência Mensal */}
+          {newRecurrenceType === "monthly" && (
+            <Field label="Dia do mês">
+              <input 
+                type="number" 
+                min="1" 
+                max="31" 
+                value={newRecurrenceDay} 
+                onChange={(e) => setNewRecurrenceDay(Number(e.target.value))} 
+                className={inputCls} 
+              />
+            </Field>
+          )}
+
+          <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+            <span className="text-sm font-medium text-slate-700">Subtarefas Padrão</span>
+            {formSubtasks.length > 0 && (
+              <ul className="mb-2 space-y-1">
+                {formSubtasks.map((st, idx) => (
+                  <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="truncate">{st.title}</span>
+                      {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
+                    </div>
+                    <button type="button" onClick={() => setFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <MentionInput
+               value={formSubtaskInput}
+               onChange={setFormSubtaskInput}
+               onSubmit={(text, assignedToId) => {
+                setFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
+                setFormSubtaskInput("");
+              }}
+              users={visibleUsers}
+              placeholder="Ex: Verificar portas (Use @...)"
+            />
+          </div>
+          <button type="submit" disabled={savingTemplate} className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-60">
+            {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : editingTemplateId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            {editingTemplateId ? "Salvar alterações" : "Adicionar rotina"}
+          </button>
+        </form>
+
+        <div className="overflow-hidden rounded-xl border bg-white">
+          <header className="flex justify-between items-center border-b bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700">
+        	  <span>Rotinas cadastradas ({manageList.length})</span>
+      	  </header>
+      	  <ul className="divide-y max-h-[700px] overflow-y-auto">
+      	    {manageList.map((t) => (
+      	      <li key={t.id} className={`flex items-start gap-3 px-4 py-3 ${editingTemplateId === t.id ? "bg-primary/5" : ""}`}>
+      	        <div className="min-w-0 flex-1">
+      	          <p className="font-medium text-slate-800">{t.title}</p>
+      	          <p className="mt-0.5 text-xs text-slate-500">{t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}</p>
+      	        </div>
+      	        <button onClick={() => handleStartEdit(t)} className="rounded p-1.5 text-slate-500 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
+      	        <button onClick={() => setDeletingTemplate(t)} className="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+      	      </li>
+      	    ))}
+      	  </ul>
+    	  </div>
+      </div>
+    )}
+
+    {/* Modal Concluir Tarefa que exige Foto/Valor */}
+    {completingTemplate && (
+      <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
+        <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
+          {completingTemplate.requires_input && <Field label={`${completingTemplate.input_label || "Valor"} *`}><input value={inputValue} onChange={(e) => setInputValue(e.target.value)} autoFocus className={inputCls} /></Field>}
+          {completingTemplate.requires_photo && <Field label="Foto *"><input type="file" accept="image/*" capture="environment" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm" /></Field>}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setCompletingTemplate(null)} disabled={uploading} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+            <button type="submit" disabled={uploading} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Concluir
+            </button>
+          </div>
+        </form>
+      </Modal>
+    )}
+
+    {/* Modal de Aceite com Definição de Prazo */}
+    {acceptingTask && (
+      <Modal title="Definir prazo de resolução" onClose={() => setAcceptingTask(null)}>
+        <form onSubmit={confirmAcceptTask} className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Informe ao solicitante quando prevê concluir esta tarefa.
+          </p>
+          <Field label="Data prevista para conclusão *">
+            <input 
+              type="date" 
+              value={resolutionDate} 
+              onChange={(e) => setResolutionDate(e.target.value)} 
+              className={inputCls} 
+              required 
+            />
+          </Field>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setAcceptingTask(null)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+            <button type="submit" disabled={togglingId === acceptingTask.id} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
+              {togglingId === acceptingTask.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />} 
+              Confirmar Aceite
+            </button>
+          </div>
+        </form>
+      </Modal>
+    )}
+
+    {/* Modal Nova Tarefa Extra (ou Edição) com Permissão de Escolha de Responsável */}
+    {showOneTimeModal && (
+      <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
+        <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
+            <Field label="Setor / Depto"><select value={oneTimeSetor} onChange={(e) => setOneTimeSetor(e.target.value)} className={inputCls}>{SETORES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
+          </div>
+          <Field label="Título *"><input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} placeholder="Ex: Orçamento confraternização" /></Field>
+          <Field label="Descrição / Detalhes"><textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} placeholder="Descreva os valores..." /></Field>
+           
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+            <Field label="Responsável">
+              <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
+                <option value="">Equipe (Sem dono)</option>
+                {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
               </select>
             </Field>
-
-            {/* Bloco de Dias Específicos */}
-            {newRecurrenceType === "custom" && (
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium text-slate-700">Selecione os dias da semana</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {DAYS_OF_WEEK.map((d) => {
-                    const selected = newCustomDays.includes(d.value);
-                    return (
-                      <button
-                        key={d.value}
-                        type="button"
-                        onClick={() => handleToggleCustomDay(d.value)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors ${
-                          selected 
-                            ? "bg-primary text-white border-primary" 
-                            : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-                        }`}
-                      >
-                        {d.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Bloco de Recorrência Mensal */}
-            {newRecurrenceType === "monthly" && (
-              <Field label="Dia do mês">
-                <input 
-                  type="number" 
-                  min="1" 
-                  max="31" 
-                  value={newRecurrenceDay} 
-                  onChange={(e) => setNewRecurrenceDay(Number(e.target.value))} 
-                  className={inputCls} 
-                />
-              </Field>
-            )}
-
-            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
-              <span className="text-sm font-medium text-slate-700">Subtarefas Padrão</span>
-              {formSubtasks.length > 0 && (
-                <ul className="mb-2 space-y-1">
-                  {formSubtasks.map((st, idx) => (
-                    <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="truncate">{st.title}</span>
-                        {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
-                      </div>
-                      <button type="button" onClick={() => setFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <MentionInput
-                 value={formSubtaskInput}
-                 onChange={setFormSubtaskInput}
-                 onSubmit={(text, assignedToId) => {
-                   setFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
-                   setFormSubtaskInput("");
-                 }}
-                 users={visibleUsers}
-                 placeholder="Ex: Verificar portas (Use @...)"
-              />
-            </div>
-            <button type="submit" disabled={savingTemplate} className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-60">
-              {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : editingTemplateId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-              {editingTemplateId ? "Salvar alterações" : "Adicionar rotina"}
-            </button>
-          </form>
-
-          <div className="overflow-hidden rounded-xl border bg-white">
-            <header className="flex justify-between items-center border-b bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700">
-              <span>Rotinas cadastradas ({manageList.length})</span>
-            </header>
-            <ul className="divide-y max-h-[700px] overflow-y-auto">
-              {manageList.map((t) => (
-                <li key={t.id} className={`flex items-start gap-3 px-4 py-3 ${editingTemplateId === t.id ? "bg-primary/5" : ""}`}>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-slate-800">{t.title}</p>
-                    <p className="mt-0.5 text-xs text-slate-500">{t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}</p>
-                  </div>
-                  <button onClick={() => handleStartEdit(t)} className="rounded p-1.5 text-slate-500 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
-                  <button onClick={() => setDeletingTemplate(t)} className="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
-                </li>
-              ))}
-            </ul>
           </div>
-        </div>
-      )}
 
-      {/* Modal Concluir Tarefa que exige Foto/Valor */}
-      {completingTemplate && (
-        <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
-          <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
-            {completingTemplate.requires_input && <Field label={`${completingTemplate.input_label || "Valor"} *`}><input value={inputValue} onChange={(e) => setInputValue(e.target.value)} autoFocus className={inputCls} /></Field>}
-            {completingTemplate.requires_photo && <Field label="Foto *"><input type="file" accept="image/*" capture="environment" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm" /></Field>}
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setCompletingTemplate(null)} disabled={uploading} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-              <button type="submit" disabled={uploading} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Concluir
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
+          <Field label="Prazo (Data de Execução)">
+             <input type="date" value={oneTimeDueDate} onChange={(e) => setOneTimeDueDate(e.target.value)} className={inputCls} />
+          </Field>
 
-      {/* Modal de Aceite com Definição de Prazo */}
-      {acceptingTask && (
-        <Modal title="Definir prazo de resolução" onClose={() => setAcceptingTask(null)}>
-          <form onSubmit={confirmAcceptTask} className="space-y-4">
-            <p className="text-sm text-slate-600">
-              Informe ao solicitante quando prevê concluir esta tarefa.
-            </p>
-            <Field label="Data prevista para conclusão *">
-              <input 
-                type="date" 
-                value={resolutionDate} 
-                onChange={(e) => setResolutionDate(e.target.value)} 
-                className={inputCls} 
-                required 
+          <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+            <span className="text-sm font-medium text-slate-700">Perguntas ou Passos</span>
+            {oneTimeFormSubtasks.length > 0 && (
+              <ul className="mb-2 space-y-1">
+                {oneTimeFormSubtasks.map((st, idx) => (
+                  <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="truncate">{st.title}</span>
+                      {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
+                    </div>
+                    {!editingOneTimeId && (
+                      <button type="button" onClick={() => setOneTimeFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!editingOneTimeId && (
+              <MentionInput
+                  value={oneTimeSubInput}
+                  onChange={oneTimeSubInput => setOneTimeSubInput(oneTimeSubInput)}
+                  onSubmit={(text, assignedToId) => {
+                    setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
+                    setOneTimeSubInput("");
+                  }}
+                  users={visibleUsers}
+                  placeholder="Escreva e use @ para direcionar..."
               />
-            </Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setAcceptingTask(null)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-              <button type="submit" disabled={togglingId === acceptingTask.id} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
-                {togglingId === acceptingTask.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />} 
-                Confirmar Aceite
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
+            )}
+            {editingOneTimeId && <p className="text-xs text-slate-500 italic">Adicione passos diretamente na lista de tarefas.</p>}
+          </div>
+           
+          <div className="flex justify-end gap-2 mt-2">
+            <button type="button" onClick={() => setShowOneTimeModal(false)} disabled={isSavingTask} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+            <button type="submit" disabled={isSavingTask} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
+              {isSavingTask ? <Loader2 className="h-4 w-4 animate-spin" /> : editingOneTimeId ? <Pencil className="h-4 w-4" /> : <Zap className="h-4 w-4" />} 
+              {editingOneTimeId ? "Salvar Tarefa" : "Criar tarefa"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+    )}
 
-      {/* Modal Nova Tarefa Extra (ou Edição) com Permissão de Escolha de Responsável */}
-      {showOneTimeModal && (
-        <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
-          <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Empresa"><select value={oneTimeEmpresa} onChange={(e) => setOneTimeEmpresa(e.target.value)} className={inputCls}>{EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
-              <Field label="Setor / Depto"><select value={oneTimeSetor} onChange={(e) => setOneTimeSetor(e.target.value)} className={inputCls}>{SETORES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
-            </div>
-            <Field label="Título *"><input value={oneTimeTitle} onChange={(e) => setOneTimeTitle(e.target.value)} required autoFocus className={inputCls} placeholder="Ex: Orçamento confraternização" /></Field>
-            <Field label="Descrição / Detalhes"><textarea value={oneTimeDesc} onChange={(e) => setOneTimeDesc(e.target.value)} rows={2} className={inputCls} placeholder="Descreva os valores..." /></Field>
-            
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Categoria"><select value={oneTimeCategory} onChange={(e) => setOneTimeCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-              <Field label="Responsável">
-                <select value={oneTimeAssignedTo} onChange={(e) => setOneTimeAssignedTo(e.target.value)} className={inputCls}>
-                  <option value="">Equipe (Sem dono)</option>
-                  {visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
-                </select>
-              </Field>
-            </div>
-
-            <Field label="Prazo (Data de Execução)">
-               <input type="date" value={oneTimeDueDate} onChange={(e) => setOneTimeDueDate(e.target.value)} className={inputCls} />
-            </Field>
-
-            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
-              <span className="text-sm font-medium text-slate-700">Perguntas ou Passos</span>
-              {oneTimeFormSubtasks.length > 0 && (
-                <ul className="mb-2 space-y-1">
-                  {oneTimeFormSubtasks.map((st, idx) => (
-                    <li key={idx} className="flex items-center justify-between rounded bg-white px-2.5 py-1.5 text-xs border">
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="truncate">{st.title}</span>
-                        {st.assigned_to && <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 shrink-0"><UserIcon className="h-3 w-3" /> {userName(st.assigned_to)}</span>}
-                      </div>
-                      {!editingOneTimeId && (
-                        <button type="button" onClick={() => setOneTimeFormSubtasks((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 ml-2 shrink-0"><Trash2 className="h-3.5 w-3.5" /></button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {!editingOneTimeId && (
-                <MentionInput
-                   value={oneTimeSubInput}
-                   onChange={oneTimeSubInput => setOneTimeSubInput(oneTimeSubInput)}
-                   onSubmit={(text, assignedToId) => {
-                     setOneTimeFormSubtasks(prev => [...prev, { title: text, assigned_to: assignedToId ?? null }]);
-                     setOneTimeSubInput("");
-                   }}
-                   users={visibleUsers}
-                   placeholder="Escreva e use @ para direcionar..."
-                />
-              )}
-              {editingOneTimeId && <p className="text-xs text-slate-500 italic">Adicione passos diretamente na lista de tarefas.</p>}
-            </div>
-            
-            <div className="flex justify-end gap-2 mt-2">
-              <button type="button" onClick={() => setShowOneTimeModal(false)} disabled={isSavingTask} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
-              <button type="submit" disabled={isSavingTask} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-60">
-                {isSavingTask ? <Loader2 className="h-4 w-4 animate-spin" /> : editingOneTimeId ? <Pencil className="h-4 w-4" /> : <Zap className="h-4 w-4" />} 
-                {editingOneTimeId ? "Salvar Tarefa" : "Criar tarefa"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      <ConfirmDialog open={!!deletingTemplate} onOpenChange={(o) => !o && setDeletingTemplate(null)} title="Excluir rotina?" description={`"${deletingTemplate?.title ?? ""}" e todo o histórico serão removidos.`} confirmLabel="Excluir" onConfirm={handleDeleteTemplate} />
-    </div>
+    <ConfirmDialog open={!!deletingTemplate} onOpenChange={(o) => !o && setDeletingTemplate(null)} title="Excluir rotina?" description={`"${deletingTemplate?.title ?? ""}" e todo o histórico serão removidos.`} confirmLabel="Excluir" onConfirm={handleDeleteTemplate} />
+  </div>
   );
 }
 
