@@ -392,8 +392,9 @@ export default function ChecklistPage() {
 
   const userRole = currentUserProfile?.role ?? "member";
   const isColaborador = userRole === "member";
-  const isDiretor = userRole === "diretor";
   const isGestor = userRole === "gestor";
+  // isDiretor mantido apenas para referência se necessário no futuro
+  const isDiretor = userRole === "diretor";
 
   useEffect(() => { fetchInitialData(); }, []);
 
@@ -468,7 +469,7 @@ export default function ChecklistPage() {
 
     let query = supabase.from("daily_checklist_templates").select("*").order("created_at", { ascending: true });
     if (profileData?.role === "member" && profileData.empresas?.length) {
-      query = query.in("empresa", profileData.empresas);
+      query = query.in("empresa", [...profileData.empresas, "Todas / Grupo B&A"]);
     }
     const { data: tmpls, error } = await query;
 
@@ -966,26 +967,16 @@ export default function ChecklistPage() {
   const visibleUsers = useMemo(() => {
     return users.filter(u => {
       const emailOrName = (u.email || "").toLowerCase() + " " + (u.full_name || "").toLowerCase();
-      if (emailOrName.includes("almeida.gabriel")) return false;
-
-      if (isDiretor) {
-        if (u.role === "diretor" && u.id !== currentUser) return false;
-      }
+      if (emailOrName.includes("almeida.gabriel")) return false; // Mantém-se apenas se for intencional não aparecer na lista de responsáveis diretos
       return true;
     });
-  }, [users, isDiretor, currentUser]);
+  }, [users]);
 
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
       const assignedUser = users.find(u => u.id === t.assigned_to);
       const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
-      if (isAlmeidaGabriel) return false;
-
-      if (isDiretor && t.assigned_to) {
-        if (assignedUser?.role === "diretor" && t.assigned_to !== currentUser) {
-          return false;
-        }
-      }
+      if (isAlmeidaGabriel) return false; // Filtro intencional do seu perfil como assignee principal
 
       if (isGestor) {
         const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
@@ -1008,7 +999,7 @@ export default function ChecklistPage() {
       }
       return false;
     });
-  }, [templates, startDate, endDate, oneTimeDoneBefore, isDiretor, isGestor, users, currentUser, subtasks, taskMessages]);
+  }, [templates, startDate, endDate, oneTimeDoneBefore, isGestor, currentUser, subtasks, taskMessages, users]);
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
@@ -1025,7 +1016,8 @@ export default function ChecklistPage() {
       
       let hasAccessToEmpresa = true;
       if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
-        hasAccessToEmpresa = t.empresa ? currentUserProfile.empresas.includes(t.empresa) || t.empresa === "Todas / Grupo B&A" : true;
+        const isGlobalEmpresa = !t.empresa || t.empresa === "Todas / Grupo B&A";
+        hasAccessToEmpresa = isGlobalEmpresa || currentUserProfile.empresas.includes(t.empresa);
       }
 
       if (isColaborador) {
