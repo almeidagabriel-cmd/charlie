@@ -497,14 +497,12 @@ export default function ChecklistPage() {
     setNotifications((prev) => prev.map((item) => (item.id === n.id ? { ...item, read: true } : item)));
     setShowNotifications(false);
 
-    // Tenta encontrar a tarefa correspondente pelo título na mensagem ou no título da notificação
     const matchingTemplate = templates.find(t => 
       n.message.toLowerCase().includes(t.title.toLowerCase()) || 
       n.title.toLowerCase().includes(t.title.toLowerCase())
     );
 
     if (matchingTemplate) {
-      // Se for pontual, vai para a aba de tarefas; senão, rotinas diárias
       if (matchingTemplate.is_one_time) {
         setActiveTab("tasks");
       } else {
@@ -1167,7 +1165,7 @@ export default function ChecklistPage() {
               {unreadNotificationsCount > 0 && <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">{unreadNotificationsCount}</span>}
             </button>
             {showNotifications && (
-              <div className="absolute right-0 mt-2 w-80 rounded-xl border bg-white p-3 shadow-xl z-50">
+              <div className="absolute right-0 sm:right-0 left-auto mt-2 w-72 sm:w-80 rounded-xl border bg-white p-3 shadow-xl z-50 max-w-[90vw]">
                 <div className="flex items-center justify-between border-b pb-2 mb-2">
                   <span className="font-semibold text-sm text-slate-800">Notificações</span>
                   <button onClick={() => setShowNotifications(false)} className="text-slate-400 hover:text-slate-700"><X className="h-4 w-4" /></button>
