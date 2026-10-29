@@ -812,7 +812,6 @@ export default function ChecklistPage() {
     setOneTimeCategory("Geral");
     setOneTimeAssignedTo("");
     
-    // Força a empresa ser a correspondente ao perfil do utilizador ou "Todas"
     if (isColaborador && currentUserProfile?.empresas && currentUserProfile.empresas.length > 0) {
       setOneTimeEmpresa(currentUserProfile.empresas[0]);
     } else {
@@ -868,7 +867,8 @@ export default function ChecklistPage() {
       is_one_time: true,
       requires_input: false,
       requires_photo: false
-      // As seguintes linhas foram removidas/comentadas:
+      // As colunas de due_date e accepted foram temporariamente ocultadas 
+      // de acordo com o último passo, para evitar o erro do schema.
       // due_date: oneTimeDueDate || null,
       // accepted: isAutoAccepted,
       // accepted_at: isAutoAccepted ? nowIso : null,
@@ -883,7 +883,6 @@ export default function ChecklistPage() {
 
     if (result.error) {
       setIsSavingTask(false);
-      // Apresenta o erro exato do Supabase no Toast para melhor rastreabilidade
       return void toast.error(`Não foi possível salvar a tarefa: ${result.error.message}`);
     }
 
@@ -1599,11 +1598,45 @@ export default function ChecklistPage() {
               <Field label="Categoria"><select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className={inputCls}>{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
               <Field label="Responsável"><select value={newAssignedTo} onChange={(e) => setNewAssignedTo(e.target.value)} className={inputCls}><option value="">Todos / Equipe</option>{visibleUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}</select></Field>
             </div>
+            
             <Field label="Recorrência">
               <select value={newRecurrenceType} onChange={(e) => setNewRecurrenceType(e.target.value as RecurrenceType)} className={inputCls}>
                 {(Object.keys(RECURRENCE_LABEL) as RecurrenceType[]).map((r) => <option key={r} value={r}>{RECURRENCE_LABEL[r]}</option>)}
               </select>
             </Field>
+
+            {newRecurrenceType === "custom" && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <span className="mb-2 block text-sm font-medium text-slate-700">Selecione os dias *</span>
+                <div className="flex flex-wrap gap-4">
+                  {DAYS_OF_WEEK.map((d) => (
+                    <label key={d.value} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={newCustomDays.includes(d.value)}
+                        onChange={() => handleToggleCustomDay(d.value)}
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                      />
+                      <span className="text-slate-700">{d.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {newRecurrenceType === "monthly" && (
+              <Field label="Dia do mês para repetição *">
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={newRecurrenceDay}
+                  onChange={(e) => setNewRecurrenceDay(Number(e.target.value))}
+                  required
+                  className={inputCls}
+                />
+              </Field>
+            )}
 
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
               <span className="text-sm font-medium text-slate-700">Subtarefas Padrão</span>
@@ -1642,16 +1675,23 @@ export default function ChecklistPage() {
               <span>Rotinas cadastradas ({manageList.length})</span>
             </header>
             <ul className="divide-y max-h-[700px] overflow-y-auto">
-              {manageList.map((t) => (
-                <li key={t.id} className={`flex items-start gap-3 px-4 py-3 ${editingTemplateId === t.id ? "bg-primary/5" : ""}`}>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-slate-800">{t.title}</p>
-                    <p className="mt-0.5 text-xs text-slate-500">{t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}</p>
-                  </div>
-                  <button onClick={() => handleStartEdit(t)} className="rounded p-1.5 text-slate-500 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
-                  <button onClick={() => setDeletingTemplate(t)} className="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
-                </li>
-              ))}
+              {manageList.map((t) => {
+                const canEdit = t.created_by === currentUser || isDiretor;
+                return (
+                  <li key={t.id} className={`flex items-start gap-3 px-4 py-3 ${editingTemplateId === t.id ? "bg-primary/5" : ""}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-slate-800">{t.title}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">{t.category} · {recurrenceText(t)} · {userName(t.assigned_to)}</p>
+                    </div>
+                    {canEdit && (
+                      <>
+                        <button onClick={() => handleStartEdit(t)} className="rounded p-1.5 text-slate-500 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
+                        <button onClick={() => setDeletingTemplate(t)} className="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+                      </>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </div>
