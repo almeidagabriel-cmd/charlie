@@ -148,7 +148,6 @@ function MentionInput({
 
     const cursor = e.target.selectionStart || 0;
     const textBeforeCursor = val.slice(0, cursor);
-    // Aceita letras acentuadas (João, Conceição...), números, _, ponto e espaços
     const match = textBeforeCursor.match(/@([\p{L}\p{N}_.\s]*)$/u);
 
     if (match) {
@@ -302,11 +301,9 @@ function recurrenceText(t: Template) {
   return RECURRENCE_LABEL[t.recurrence_type] ?? "Todos os dias";
 }
 
-// Encontra todos os usuários marcados com @Nome no texto
 function extractMentionedUserIds(text: string, users: Profile[]): string[] {
   let remaining = text.toLowerCase();
   const ids = new Set<string>();
-  // nomes mais longos primeiro: "@Ana Paula" não deve virar também "@Ana"
   const sorted = [...users].sort(
     (a, b) => (b.full_name || b.email || "").length - (a.full_name || a.email || "").length
   );
@@ -396,7 +393,6 @@ export default function ChecklistPage() {
 
   useEffect(() => { fetchInitialData(); }, []);
 
-  // Notificações: carga inicial + tempo real para o usuário logado
   useEffect(() => {
     if (!currentUser) return;
     fetchNotifications();
@@ -419,29 +415,26 @@ export default function ChecklistPage() {
 
   useEffect(() => { fetchLogs(); }, [startDate, endDate]);
 
-  // Envia notificação para OUTRO usuário (não adiciona na tela de quem envia)
+  // Função ajustada para utilizar a RPC do Supabase e ignorar o RLS de inserção direta
   async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
     if (!userId || userId === currentUser) return;
 
-    // 1) Grava a notificação (sininho + realtime)
-    const { data, error } = await supabase
-      .from("notifications")
-      .insert({ user_id: userId, title, message })
-      .select("id")
-      .single();
+    const { data: notifId, error } = await supabase.rpc("send_notification", {
+      target_user_id: userId,
+      notif_title: title,
+      notif_message: message,
+    });
 
-    if (error || !data) {
-      console.error("[notifications] falha ao inserir:", error);
+    if (error || !notifId) {
+      console.error("[notifications] falha ao inserir via RPC:", error);
       toast.error("A notificação não foi enviada", { description: error?.message });
       return;
     }
 
-    // 2) Dispara o push nativo. Envia só o id: o servidor lê título, destinatário
-    //    e subscrições da base de dados e confirma que quem chama é o remetente.
     fetch("/api/send-push", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notificationId: data.id }),
+      body: JSON.stringify({ notificationId: notifId }),
       keepalive: true,
     })
       .then(async (res) => {
@@ -597,7 +590,6 @@ export default function ChecklistPage() {
       const task = templates.find(t => t.id === templateId);
       const taskTitle = task?.title || "Tarefa";
 
-      // Todos os usuários marcados com @ no texto + o selecionado no dropdown
       const mentioned = new Set(extractMentionedUserIds(text, users));
       if (assignedUserId) mentioned.add(assignedUserId);
 
@@ -1090,7 +1082,6 @@ export default function ChecklistPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      {/* Header e Filtros */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
@@ -1181,7 +1172,6 @@ export default function ChecklistPage() {
         </div>
       </div>
 
-      {/* Tabs Menu */}
       {tabs.length > 1 && (
         <div className="flex gap-1 rounded-lg border bg-white p-1 overflow-x-auto">
           {tabs.map(({ id, label, icon: Icon }) => (
@@ -1192,7 +1182,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Renderização da Lista */}
       {(activeTab === "daily" || activeTab === "tasks") && (
         <div className="space-y-5">
           <div className="rounded-xl border bg-white p-4">
@@ -1294,7 +1283,6 @@ export default function ChecklistPage() {
 
                             {isExpanded && (
                               <div className="mt-4 space-y-4 rounded-lg bg-slate-50/50 p-4 border border-slate-100">
-                                {/* Seção 1: Passos e Perguntas Operacionais (Checklist) */}
                                 <div>
                                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Perguntas e Passos da Tarefa</p>
                                   {itemSubtasks.length === 0 ? (
@@ -1337,7 +1325,6 @@ export default function ChecklistPage() {
                                   </div>
                                 </div>
 
-                                {/* Seção 2: Chat Geral / Histórico de Mensagens */}
                                 <div className="pt-4 border-t border-slate-200">
                                   <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Conversas e Interações</p>
                                   {itemMsgs.length === 0 ? (
@@ -1398,7 +1385,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Aba de Relatório para RH */}
       {activeTab === "rh_report" && !isColaborador && (
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -1463,7 +1449,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Tabs Reports e Manage */}
       {activeTab === "reports" && !isColaborador && (
         <div className="space-y-4">
           {report.length === 0 ? (
@@ -1571,7 +1556,6 @@ export default function ChecklistPage() {
         </div>
       )}
 
-      {/* Modal Concluir Tarefa que exige Foto/Valor */}
       {completingTemplate && (
         <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
           <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
@@ -1587,7 +1571,6 @@ export default function ChecklistPage() {
         </Modal>
       )}
 
-      {/* Modal Nova Tarefa Extra (ou Edição) com Proteção contra Duplo Clique */}
       {showOneTimeModal && (
         <Modal title={editingOneTimeId ? "Editar Tarefa" : "Nova Tarefa / Pedido de Aprovação"} onClose={() => !isSavingTask && setShowOneTimeModal(false)}>
           <form onSubmit={handleSaveOneTimeTask} className="space-y-4">
