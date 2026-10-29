@@ -1,22 +1,21 @@
 // /public/sw.js
 
 self.addEventListener("push", function (event) {
-  if (!(self.Notification && self.Notification.permission === "granted")) {
-    return;
-  }
-
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
   } catch (e) {
-    data = { title: "Nova notificação", message: event.data ? event.data.text() : "" };
+    data = { title: "Grupo B&A Flow", message: event.data ? event.data.text() : "" };
   }
 
-  const title = data.title || "Grupo B&A Flow";
+  const title = data.title || "Nova Notificação";
   const options = {
     body: data.message || "Você tem uma nova atualização.",
-    icon: "/icon.png", // Se tiver um ícone na pasta public, pode usar aqui
+    icon: "/icon.png", 
     badge: "/badge.png",
+    tag: "checklist-notification", // Evita duplicados
+    renotify: true,
+    requireInteraction: true, // Mantém o balão visível até o usuário clicar
     data: { url: data.url || "/checklist" },
   };
 
@@ -33,7 +32,7 @@ self.addEventListener("notificationclick", function (event) {
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (windowClients) {
       for (let i = 0; i < windowClients.length; i++) {
         let client = windowClients[i];
-        if (client.url === urlToOpen && "focus" in client) {
+        if (client.url.includes(urlToOpen) && "focus" in client) {
           return client.focus();
         }
       }
