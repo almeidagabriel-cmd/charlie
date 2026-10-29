@@ -69,6 +69,7 @@ interface Template {
   is_one_time: boolean;
   due_date?: string | null;
   accepted?: boolean;
+  accepted_at?: string | null;
   created_at?: string;
 }
 
@@ -393,7 +394,6 @@ export default function ChecklistPage() {
   const userRole = currentUserProfile?.role ?? "member";
   const isColaborador = userRole === "member";
   const isGestor = userRole === "gestor";
-  // isDiretor mantido apenas para referência se necessário no futuro
   const isDiretor = userRole === "diretor";
 
   useEffect(() => { fetchInitialData(); }, []);
@@ -677,7 +677,8 @@ export default function ChecklistPage() {
     if (!acceptingTemplate) return;
 
     setTogglingId(acceptingTemplate.id);
-    const updatePayload: any = { accepted: true };
+    const nowIso = new Date().toISOString();
+    const updatePayload: any = { accepted: true, accepted_at: nowIso };
     if (acceptDueDate) {
       updatePayload.due_date = acceptDueDate;
     }
@@ -686,7 +687,7 @@ export default function ChecklistPage() {
     setTogglingId(null);
     if (error) return void toast.error("Erro ao aceitar a tarefa.");
     
-    setTemplates((prev) => prev.map((t) => t.id === acceptingTemplate.id ? { ...t, accepted: true, due_date: acceptDueDate || t.due_date } : t));
+    setTemplates((prev) => prev.map((t) => t.id === acceptingTemplate.id ? { ...t, accepted: true, accepted_at: nowIso, due_date: acceptDueDate || t.due_date } : t));
     setAcceptingTemplate(null);
     toast.success("Tarefa aceita com sucesso!");
 
@@ -839,6 +840,9 @@ export default function ChecklistPage() {
     setIsSavingTask(true);
 
     const targetUser = isColaborador ? currentUser : (oneTimeAssignedTo || null);
+    const isAutoAccepted = targetUser === currentUser || !targetUser;
+    const nowIso = new Date().toISOString();
+
     const payload = {
       title: oneTimeTitle, 
       description: oneTimeDesc, 
@@ -849,7 +853,8 @@ export default function ChecklistPage() {
       due_date: oneTimeDueDate || null,
       recurrence_type: "daily" as RecurrenceType, 
       is_one_time: true,
-      accepted: targetUser === currentUser || !targetUser ? true : false
+      accepted: isAutoAccepted,
+      accepted_at: isAutoAccepted ? nowIso : null
     };
 
     let result;
@@ -967,7 +972,7 @@ export default function ChecklistPage() {
   const visibleUsers = useMemo(() => {
     return users.filter(u => {
       const emailOrName = (u.email || "").toLowerCase() + " " + (u.full_name || "").toLowerCase();
-      if (emailOrName.includes("almeida.gabriel")) return false; // Mantém-se apenas se for intencional não aparecer na lista de responsáveis diretos
+      if (emailOrName.includes("almeida.gabriel")) return false;
       return true;
     });
   }, [users]);
@@ -976,7 +981,7 @@ export default function ChecklistPage() {
     return templates.filter((t) => {
       const assignedUser = users.find(u => u.id === t.assigned_to);
       const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
-      if (isAlmeidaGabriel) return false; // Filtro intencional do seu perfil como assignee principal
+      if (isAlmeidaGabriel) return false;
 
       if (isGestor) {
         const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
@@ -1080,6 +1085,7 @@ export default function ChecklistPage() {
     let totalAssigned = 0;
     let totalCompleted = 0;
     let totalNotDone = 0;
+    const acceptTimesMs: number[] = [];
 
     templates.forEach(t => {
       const assignedUser = users.find(u => u.id === t.assigned_to);
@@ -1092,15 +1098,37 @@ export default function ChecklistPage() {
       } else {
         totalNotDone++;
       }
+
+      if (t.accepted && t.created_at && t.accepted_at) {
+        const created = new Date(t.created_at).getTime();
+        const accepted = new Date(t.accepted_at).getTime();
+        if (accepted >= created) {
+          acceptTimesMs.push(accepted - created);
+        }
+      }
     });
 
     const uncompletedIndex = totalAssigned > 0 ? Math.round((totalNotDone / totalAssigned) * 100) : 0;
+
+    let avgAcceptTimeStr = "N/D";
+    if (acceptTimesMs.length > 0) {
+      const sumMs = acceptTimesMs.reduce((a, b) => a + b, 0);
+      const avgMs = sumMs / acceptTimesMs.length;
+      const avgMinutes = Math.round(avgMs / (1000 * 60));
+      
+      if (avgMinutes < 60) {
+        avgAcceptTimeStr = `${avgMinutes} min`;
+      } else {
+        const hours = (avgMs / (1000 * 60 * 60)).toFixed(1);
+        avgAcceptTimeStr = `${hours}h`;
+      }
+    }
 
     return {
       totalAssigned,
       totalCompleted,
       totalNotDone,
-      avgAcceptTimeHours: "0",
+      avgAcceptTimeHours: avgAcceptTimeStr,
       uncompletedIndex,
     };
   }, [templates, logs, users]);
@@ -1438,8 +1466,8 @@ export default function ChecklistPage() {
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border bg-white p-5 shadow-sm">
               <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tempo Médio de Aceite</span>
-              <p className="mt-2 text-3xl font-bold text-slate-900">N/D</p>
-              <p className="mt-1 text-xs text-slate-400">Indicador em atualização.</p>
+              <p className="mt-2 text-3xl font-bold text-slate-900">{rhReportData.avgAcceptTimeHours}</p>
+              <p className="mt-1 text-xs text-slate-400">Tempo médio até a confirmação do aceite.</p>
             </div>
 
             <div className="rounded-xl border bg-white p-5 shadow-sm">
