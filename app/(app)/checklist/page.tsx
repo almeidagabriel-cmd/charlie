@@ -418,7 +418,11 @@ export default function ChecklistPage() {
     return () => { supabase.removeChannel(channel); };
   }, [currentUser]);
 
-  useEffect(() => { fetchLogs(); }, [startDate, endDate]);
+  useEffect(() => { 
+    if (templates.length > 0) {
+      fetchLogs(templates); 
+    }
+  }, [startDate, endDate]);
 
   async function safeSendNotification(userId: string | null | undefined, title: string, message: string) {
     if (!userId || userId === currentUser) return;
@@ -478,10 +482,58 @@ export default function ChecklistPage() {
       setTemplates(tmpls);
       const ids = tmpls.map((t: Template) => t.id);
       fetchSubtasks(ids);
+      await fetchLogs(tmpls); // Passa os templates recém carregados para garantir a lógica
+    } else {
+      await fetchLogs(templates);
     }
 
-    await fetchLogs();
     setLoading(false);
+  }
+
+  // --- NOVA FUNÇÃO FETCH LOGS CORRIGIDA ---
+  async function fetchLogs(currentTemplates: Template[]) {
+    // 1. Carrega os logs normais do período selecionado
+    const { data: lgData, error } = await supabase
+      .from("daily_checklist_logs")
+      .select("*")
+      .gte("date", startDate)
+      .lte("date", endDate)
+      .order("date", { ascending: true });
+
+    if (error) { toast.error("Erro ao carregar registros"); return; }
+    
+    const logMap: Record<string, Log> = {};
+    const doneBefore = new Set<string>();
+
+    if (lgData) {
+      lgData.forEach((l: Log) => {
+        logMap[l.template_id] = l;
+      });
+    }
+
+    // 2. Garante que as tarefas pontuais não voltam após serem finalizadas no passado
+    const oneTimeIds = currentTemplates.filter(t => t.is_one_time).map(t => t.id);
+    if (oneTimeIds.length > 0) {
+      const { data: pastLogs } = await supabase
+        .from("daily_checklist_logs")
+        .select("*")
+        .in("template_id", oneTimeIds)
+        .eq("completed", true)
+        .lt("date", startDate); // Procura todas concluídas ANTES do dia de hoje (ou do startDate selecionado)
+        
+      if (pastLogs) {
+        pastLogs.forEach((l: Log) => {
+           doneBefore.add(l.template_id);
+           // Também atualiza o mapa de logs para a interface reconhecer como concluída (mesmo se o filtro mudar)
+           if (!logMap[l.template_id]) {
+              logMap[l.template_id] = l;
+           }
+        });
+      }
+    }
+
+    setLogs(logMap);
+    setOneTimeDoneBefore(doneBefore);
   }
 
   async function fetchNotifications() {
@@ -554,21 +606,6 @@ export default function ChecklistPage() {
       
       setSubtasks(mapSubtasks);
       setTaskMessages(mapMessages);
-    }
-  }
-
-  async function fetchLogs() {
-    const { data: lgData, error } = await supabase.from("daily_checklist_logs").select("*").gte("date", startDate).lte("date", endDate).order("date", { ascending: true });
-    if (error) { toast.error("Erro ao carregar registros"); return; }
-    if (lgData) {
-      const logMap: Record<string, Log> = {};
-      const doneBefore = new Set<string>();
-      lgData.forEach((l: Log) => {
-        logMap[l.template_id] = l;
-        if (l.completed && l.date < startDate) doneBefore.add(l.template_id);
-      });
-      setLogs(logMap);
-      setOneTimeDoneBefore(doneBefore);
     }
   }
 
@@ -685,7 +722,7 @@ export default function ChecklistPage() {
 
     const { error } = await supabase.from("daily_checklist_templates").update(updatePayload).eq("id", acceptingTemplate.id);
     setTogglingId(null);
-    if (error) return void toast.error("Erro ao aceitar a tarefa.");
+    if (error) return void toast.error(`Erro ao aceitar a tarefa: ${error.message}`);
     
     setTemplates((prev) => prev.map((t) => t.id === acceptingTemplate.id ? { ...t, accepted: true, accepted_at: nowIso, due_date: acceptDueDate || t.due_date } : t));
     setAcceptingTemplate(null);
@@ -713,6 +750,16 @@ export default function ChecklistPage() {
         ...prev,
         [template.id]: { ...(currentLog), completed: false, completed_at: null }
       }));
+      
+      // Remover de oneTimeDoneBefore localmente se foi desmarcado
+      if (template.is_one_time) {
+        setOneTimeDoneBefore(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(template.id);
+          return newSet;
+        });
+      }
+
       toast.success("Tarefa desmarcada!");
     } else {
       if (template.requires_input || template.requires_photo) {
@@ -776,10 +823,16 @@ export default function ChecklistPage() {
 
     setUploading(false);
     setLogs((prev) => ({ ...prev, [templateId]: savedLog }));
+    
+    // Adicionar localmente ao oneTimeDoneBefore se for uma tarefa pontual
+    const tmpl = templates.find(t => t.id === templateId);
+    if (tmpl?.is_one_time) {
+      setOneTimeDoneBefore(prev => new Set(prev).add(templateId));
+    }
+
     setCompletingTemplate(null);
     toast.success("Tarefa concluída com sucesso!");
 
-    const tmpl = templates.find(t => t.id === templateId);
     if (tmpl && tmpl.created_by && tmpl.created_by !== currentUser) {
       const senderName = currentUserProfile?.full_name || "Alguém";
       await safeSendNotification(tmpl.created_by, "Tarefa Concluída", `${senderName} concluiu a tarefa: "${tmpl.title}"`);
@@ -866,12 +919,10 @@ export default function ChecklistPage() {
       recurrence_type: "daily" as RecurrenceType, 
       is_one_time: true,
       requires_input: false,
-      requires_photo: false
-      // As colunas de due_date e accepted foram temporariamente ocultadas 
-      // de acordo com o último passo, para evitar o erro do schema.
-      // due_date: oneTimeDueDate || null,
-      // accepted: isAutoAccepted,
-      // accepted_at: isAutoAccepted ? nowIso : null,
+      requires_photo: false,
+      due_date: oneTimeDueDate || null,
+      accepted: isAutoAccepted,
+      accepted_at: isAutoAccepted ? nowIso : null,
     };
 
     let result;
