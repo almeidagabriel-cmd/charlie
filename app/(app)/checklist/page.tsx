@@ -62,7 +62,7 @@ interface Template {
   created_by?: string | null;
   recurrence_type: RecurrenceType;
   recurrence_day: number | null;
-  custom_days: number[] | null;
+  custom_days: any | null; // Alterado para aceitar qualquer formato vindo do Supabase
   requires_input: boolean;
   input_label: string | null;
   requires_photo: boolean;
@@ -260,6 +260,17 @@ const SETORES = [
   "Operacional / Salão", "Cozinha & Produção", "Compras & Suprimentos",
 ];
 
+// NOVA FUNÇÃO: Traduz qualquer formato maluco de dados que o Supabase envie em um Array de Números limpo
+function parseCustomDays(val: any): number[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.map(Number);
+  if (typeof val === 'string') {
+    const matches = val.match(/\d+/g);
+    if (matches) return matches.map(Number);
+  }
+  return [];
+}
+
 function todayLocal() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -287,7 +298,7 @@ function isDueOn(t: Template, dateStr: string) {
       const target = Math.min(t.recurrence_day ?? 1, lastDay);
       return date.getDate() === target;
     }
-    case "custom": return (t.custom_days ?? []).includes(dow);
+    case "custom": return parseCustomDays(t.custom_days).includes(dow);
     default: return true;
   }
 }
@@ -296,7 +307,8 @@ function recurrenceText(t: Template) {
   if (t.is_one_time) return "Tarefa pontual";
   if (t.recurrence_type === "monthly") return `Mensal — dia ${t.recurrence_day ?? 1}`;
   if (t.recurrence_type === "custom") {
-    const days = DAYS_OF_WEEK.filter((d) => (t.custom_days ?? []).includes(d.value)).map((d) => d.label);
+    const daysArr = parseCustomDays(t.custom_days);
+    const days = DAYS_OF_WEEK.filter((d) => daysArr.includes(d.value)).map((d) => d.label);
     return days.length ? days.join(", ") : "Nenhum dia selecionado";
   }
   return RECURRENCE_LABEL[t.recurrence_type] ?? "Todos os dias";
@@ -482,7 +494,7 @@ export default function ChecklistPage() {
       setTemplates(tmpls);
       const ids = tmpls.map((t: Template) => t.id);
       fetchSubtasks(ids);
-      await fetchLogs(tmpls); // Passa os templates recém carregados para garantir a lógica
+      await fetchLogs(tmpls); 
     } else {
       await fetchLogs(templates);
     }
@@ -490,9 +502,7 @@ export default function ChecklistPage() {
     setLoading(false);
   }
 
-  // --- NOVA FUNÇÃO FETCH LOGS CORRIGIDA ---
   async function fetchLogs(currentTemplates: Template[]) {
-    // 1. Carrega os logs normais do período selecionado
     const { data: lgData, error } = await supabase
       .from("daily_checklist_logs")
       .select("*")
@@ -511,7 +521,6 @@ export default function ChecklistPage() {
       });
     }
 
-    // 2. Garante que as tarefas pontuais não voltam após serem finalizadas no passado
     const oneTimeIds = currentTemplates.filter(t => t.is_one_time).map(t => t.id);
     if (oneTimeIds.length > 0) {
       const { data: pastLogs } = await supabase
@@ -519,12 +528,11 @@ export default function ChecklistPage() {
         .select("*")
         .in("template_id", oneTimeIds)
         .eq("completed", true)
-        .lt("date", startDate); // Procura todas concluídas ANTES do dia de hoje (ou do startDate selecionado)
+        .lt("date", startDate);
         
       if (pastLogs) {
         pastLogs.forEach((l: Log) => {
            doneBefore.add(l.template_id);
-           // Também atualiza o mapa de logs para a interface reconhecer como concluída (mesmo se o filtro mudar)
            if (!logMap[l.template_id]) {
               logMap[l.template_id] = l;
            }
@@ -751,7 +759,6 @@ export default function ChecklistPage() {
         [template.id]: { ...(currentLog), completed: false, completed_at: null }
       }));
       
-      // Remover de oneTimeDoneBefore localmente se foi desmarcado
       if (template.is_one_time) {
         setOneTimeDoneBefore(prev => {
           const newSet = new Set(prev);
@@ -824,7 +831,6 @@ export default function ChecklistPage() {
     setUploading(false);
     setLogs((prev) => ({ ...prev, [templateId]: savedLog }));
     
-    // Adicionar localmente ao oneTimeDoneBefore se for uma tarefa pontual
     const tmpl = templates.find(t => t.id === templateId);
     if (tmpl?.is_one_time) {
       setOneTimeDoneBefore(prev => new Set(prev).add(templateId));
@@ -980,7 +986,11 @@ export default function ChecklistPage() {
     setNewTitle(template.title); setNewDesc(template.description || ""); setNewCategory(template.category || "Geral");
     setNewEmpresa(template.empresa || "Todas / Grupo B&A"); setNewSetor(template.setor || "Geral / Todos");
     setNewAssignedTo(template.assigned_to || ""); setNewRecurrenceType(template.recurrence_type || "daily");
-    setNewRecurrenceDay(template.recurrence_day || 1); setNewCustomDays(template.custom_days || []);
+    setNewRecurrenceDay(template.recurrence_day || 1); 
+    
+    // AQUI: Forçar a leitura dos dias sempre como um Array de Números
+    setNewCustomDays(parseCustomDays(template.custom_days)); 
+    
     setNewRequiresInput(template.requires_input || false); setNewInputLabel(template.input_label || ""); setNewRequiresPhoto(template.requires_photo || false);
     const currentSubs = subtasks[template.id] || [];
     setFormSubtasks(currentSubs.map((s) => ({ title: s.title, assigned_to: s.assigned_to || null })));
