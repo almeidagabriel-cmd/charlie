@@ -62,7 +62,7 @@ interface Template {
   created_by?: string | null;
   recurrence_type: RecurrenceType;
   recurrence_day: number | null;
-  custom_days: any | null; // Alterado para aceitar qualquer formato vindo do Supabase
+  custom_days: any | null; 
   requires_input: boolean;
   input_label: string | null;
   requires_photo: boolean;
@@ -260,7 +260,6 @@ const SETORES = [
   "Operacional / Salão", "Cozinha & Produção", "Compras & Suprimentos",
 ];
 
-// NOVA FUNÇÃO: Traduz qualquer formato maluco de dados que o Supabase envie em um Array de Números limpo
 function parseCustomDays(val: any): number[] {
   if (!val) return [];
   if (Array.isArray(val)) return val.map(Number);
@@ -988,7 +987,6 @@ export default function ChecklistPage() {
     setNewAssignedTo(template.assigned_to || ""); setNewRecurrenceType(template.recurrence_type || "daily");
     setNewRecurrenceDay(template.recurrence_day || 1); 
     
-    // AQUI: Forçar a leitura dos dias sempre como um Array de Números
     setNewCustomDays(parseCustomDays(template.custom_days)); 
     
     setNewRequiresInput(template.requires_input || false); setNewInputLabel(template.input_label || ""); setNewRequiresPhoto(template.requires_photo || false);
@@ -1062,17 +1060,27 @@ export default function ChecklistPage() {
     });
   }, [users]);
 
+  // Modificado: Tarefas clicadas na notificação furam todos os filtros e a leitura de menções é ativada
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
+      if (t.id === highlightedTaskId) return true; // Fura filtros de data/responsável se clicou na notificação
+
       const assignedUser = users.find(u => u.id === t.assigned_to);
       const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
-      if (isAlmeidaGabriel) return false;
+      
+      // Ajuste: Não esconde as tarefas se o utilizador logado for o próprio Gabriel!
+      if (isAlmeidaGabriel && currentUser !== assignedUser?.id) return false;
 
       if (isGestor) {
         const isMyTask = t.assigned_to === currentUser || t.created_by === currentUser;
         const subtaskAssignedToMe = (subtasks[t.id] || []).some(s => s.assigned_to === currentUser);
-        const messageAssignedToMe = (taskMessages[t.id] || []).some(m => m.user_id === currentUser);
-        if (!isMyTask && !subtaskAssignedToMe && !messageAssignedToMe) return false;
+        const messageSentByMe = (taskMessages[t.id] || []).some(m => m.user_id === currentUser);
+        
+        // NOVO: Verifica se fui mencionado no texto dos comentários
+        const myFullName = currentUserProfile?.full_name?.toLowerCase() || "";
+        const mentionedMe = myFullName ? (taskMessages[t.id] || []).some(m => m.message.toLowerCase().includes(`@${myFullName}`)) : false;
+        
+        if (!isMyTask && !subtaskAssignedToMe && !messageSentByMe && !mentionedMe) return false;
       }
 
       if (t.is_one_time) {
@@ -1089,17 +1097,31 @@ export default function ChecklistPage() {
       }
       return false;
     });
-  }, [templates, startDate, endDate, oneTimeDoneBefore, isGestor, currentUser, subtasks, taskMessages, users]);
+  }, [templates, startDate, endDate, oneTimeDoneBefore, isGestor, currentUser, currentUserProfile, subtasks, taskMessages, users, highlightedTaskId]);
 
   const isDone = (t: Template) => !!logs[t.id]?.completed;
 
   const visibleTasksBase = useMemo(() => {
     return dueInRange.filter((t) => {
+      if (t.id === highlightedTaskId) return true; // Fura filtros de dropdown/empresa se clicou na notificação
+
       const itemSubs = subtasks[t.id] || [];
       const itemMsgs = taskMessages[t.id] || [];
+      
       const hasSubtaskAssignedToUser = filterUser !== "all" && itemSubs.some(s => s.assigned_to === filterUser);
       
-      const matchesUser = filterUser === "all" || t.assigned_to === filterUser || !t.assigned_to || hasSubtaskAssignedToUser || t.created_by === filterUser;
+      const filterUserObj = filterUser !== "all" ? users.find(u => u.id === filterUser) : null;
+      const filterUserFullName = filterUserObj?.full_name?.toLowerCase() || "";
+      const isFilterUserMentioned = filterUserFullName 
+          ? itemMsgs.some(m => m.message.toLowerCase().includes(`@${filterUserFullName}`)) 
+          : false;
+
+      const matchesUser = filterUser === "all" || 
+                          t.assigned_to === filterUser || 
+                          !t.assigned_to || 
+                          hasSubtaskAssignedToUser || 
+                          t.created_by === filterUser || 
+                          isFilterUserMentioned;
       
       const matchesEmpresa = filterEmpresa === "all" || t.empresa === filterEmpresa || t.empresa === "Todas / Grupo B&A";
       const matchesSetor = filterSetor === "all" || t.setor === filterSetor || t.setor === "Geral / Todos";
@@ -1111,13 +1133,21 @@ export default function ChecklistPage() {
       }
 
       if (isColaborador) {
-        const assignedToMe = t.assigned_to === currentUser || itemSubs.some(s => s.assigned_to === currentUser) || itemMsgs.some(m => m.user_id === currentUser) || t.created_by === currentUser;
+        const myFullName = currentUserProfile?.full_name?.toLowerCase() || "";
+        const amIMentioned = myFullName ? itemMsgs.some(m => m.message.toLowerCase().includes(`@${myFullName}`)) : false;
+
+        const assignedToMe = t.assigned_to === currentUser || 
+                             itemSubs.some(s => s.assigned_to === currentUser) || 
+                             itemMsgs.some(m => m.user_id === currentUser) || 
+                             t.created_by === currentUser || 
+                             amIMentioned;
+                             
         if (!assignedToMe && t.assigned_to) return false;
       }
 
       return matchesUser && matchesEmpresa && matchesSetor && hasAccessToEmpresa;
     });
-  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, currentUser]);
+  }, [dueInRange, filterUser, filterEmpresa, filterSetor, isColaborador, currentUserProfile, subtasks, taskMessages, currentUser, users, highlightedTaskId]);
 
   const visibleTasks = useMemo(() => {
     return visibleTasksBase.filter(t => !hideCompleted || !isDone(t) || t.id === highlightedTaskId);
