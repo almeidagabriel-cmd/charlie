@@ -362,6 +362,9 @@ export default function ChecklistPage() {
   
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [completingTemplate, setCompletingTemplate] = useState<Template | null>(null);
+  
+  // NOVO: Estado para guardar quem executou a tarefa
+  const [executorId, setExecutorId] = useState<string>("");
   const [inputValue, setInputValue] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -741,6 +744,7 @@ export default function ChecklistPage() {
     }
   }
 
+  // ATUALIZADO: Agora SEMPRE abre o modal para selecionar o utilizador que está a assinar a tarefa
   async function handleCheckClick(template: Template) {
     if (template.is_one_time && template.assigned_to && !template.accepted && template.assigned_to === currentUser) {
       return toast.info("Você precisa aceitar a tarefa antes de marcá-la como concluída.");
@@ -748,7 +752,9 @@ export default function ChecklistPage() {
 
     const currentLog = logs[template.id];
     const isCompleted = !!currentLog?.completed;
+    
     if (isCompleted) {
+      // Se já está concluída, desmarca instantaneamente (sem modal)
       setTogglingId(template.id);
       await supabase.from("daily_checklist_logs").update({ completed: false, completed_at: null, completed_by: currentUser }).eq("id", currentLog.id);
       setTogglingId(null);
@@ -768,17 +774,16 @@ export default function ChecklistPage() {
 
       toast.success("Tarefa desmarcada!");
     } else {
-      if (template.requires_input || template.requires_photo) {
-        setCompletingTemplate(template); setInputValue(""); setPhotoFile(null);
-      } else {
-        setTogglingId(template.id);
-        await submitCompletion(template.id, template.assigned_to, null, null);
-        setTogglingId(null);
-      }
+      // Se NÃO está concluída, abre SEMPRE o modal para escolher o executor
+      setCompletingTemplate(template); 
+      setInputValue(""); 
+      setPhotoFile(null);
+      setExecutorId(currentUser || ""); // Define o logado como padrão no dropdown
     }
   }
 
-  async function submitCompletion(templateId: string, assignedTo: string | null, val: string | null, photoUrl: string | null) {
+  // ATUALIZADO: Recebe e guarda a ID do utilizador selecionado no dropdown (selectedExecutorId)
+  async function submitCompletion(templateId: string, assignedTo: string | null, val: string | null, photoUrl: string | null, selectedExecutorId: string) {
     setUploading(true);
     const currentLog = logs[templateId];
     const targetDate = startDate;
@@ -790,7 +795,7 @@ export default function ChecklistPage() {
       await supabase.from("daily_checklist_logs").update({ 
         completed: true, 
         completed_at: nowIso, 
-        completed_by: currentUser, 
+        completed_by: selectedExecutorId, 
         input_value: val, 
         photo_url: photoUrl || currentLog.photo_url 
       }).eq("id", currentLog.id);
@@ -799,7 +804,7 @@ export default function ChecklistPage() {
         ...currentLog,
         completed: true,
         completed_at: nowIso,
-        completed_by: currentUser,
+        completed_by: selectedExecutorId,
         input_value: val,
         photo_url: photoUrl || currentLog.photo_url
       };
@@ -808,7 +813,7 @@ export default function ChecklistPage() {
         template_id: templateId, 
         completed: true, 
         completed_at: nowIso, 
-        completed_by: currentUser, 
+        completed_by: selectedExecutorId, 
         assigned_to: assignedTo, 
         date: targetDate, 
         input_value: val, 
@@ -820,7 +825,7 @@ export default function ChecklistPage() {
         template_id: templateId,
         completed: true,
         completed_at: nowIso,
-        completed_by: currentUser,
+        completed_by: selectedExecutorId,
         date: targetDate,
         input_value: val,
         photo_url: photoUrl
@@ -847,6 +852,8 @@ export default function ChecklistPage() {
   async function handleConfirmModalSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!completingTemplate) return;
+    
+    if (!executorId) return void toast.error("Selecione o colaborador que executou a tarefa.");
     if (completingTemplate.requires_input && !inputValue.trim()) return void toast.error(`Preencha o campo exigido.`);
     if (completingTemplate.requires_photo && !photoFile) return void toast.error("Anexe a foto para concluir.");
 
@@ -860,7 +867,8 @@ export default function ChecklistPage() {
       const { data: publicUrlData } = supabase.storage.from("checklist-photos").getPublicUrl(filePath);
       photoUrl = publicUrlData.publicUrl;
     }
-    await submitCompletion(completingTemplate.id, completingTemplate.assigned_to, inputValue || null, photoUrl);
+    // Passa o ID do executor escolhido no dropdown
+    await submitCompletion(completingTemplate.id, completingTemplate.assigned_to, inputValue || null, photoUrl, executorId);
   }
 
   function handleOpenNewOneTimeTask() {
@@ -1060,15 +1068,13 @@ export default function ChecklistPage() {
     });
   }, [users]);
 
-  // Modificado: Tarefas clicadas na notificação furam todos os filtros e a leitura de menções é ativada
   const dueInRange = useMemo(() => {
     return templates.filter((t) => {
-      if (t.id === highlightedTaskId) return true; // Fura filtros de data/responsável se clicou na notificação
+      if (t.id === highlightedTaskId) return true;
 
       const assignedUser = users.find(u => u.id === t.assigned_to);
       const isAlmeidaGabriel = assignedUser && ((assignedUser.email || "").toLowerCase().includes("almeida.gabriel") || (assignedUser.full_name || "").toLowerCase().includes("almeida.gabriel"));
       
-      // Ajuste: Não esconde as tarefas se o utilizador logado for o próprio Gabriel!
       if (isAlmeidaGabriel && currentUser !== assignedUser?.id) return false;
 
       if (isGestor) {
@@ -1076,7 +1082,6 @@ export default function ChecklistPage() {
         const subtaskAssignedToMe = (subtasks[t.id] || []).some(s => s.assigned_to === currentUser);
         const messageSentByMe = (taskMessages[t.id] || []).some(m => m.user_id === currentUser);
         
-        // NOVO: Verifica se fui mencionado no texto dos comentários
         const myFullName = currentUserProfile?.full_name?.toLowerCase() || "";
         const mentionedMe = myFullName ? (taskMessages[t.id] || []).some(m => m.message.toLowerCase().includes(`@${myFullName}`)) : false;
         
@@ -1103,7 +1108,7 @@ export default function ChecklistPage() {
 
   const visibleTasksBase = useMemo(() => {
     return dueInRange.filter((t) => {
-      if (t.id === highlightedTaskId) return true; // Fura filtros de dropdown/empresa se clicou na notificação
+      if (t.id === highlightedTaskId) return true; 
 
       const itemSubs = subtasks[t.id] || [];
       const itemMsgs = taskMessages[t.id] || [];
@@ -1182,14 +1187,32 @@ export default function ChecklistPage() {
     const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
 
     targetUsersForReport.forEach(u => {
-      const userTasks = visibleTasksBase.filter(t => t.assigned_to === u.id);
+      // Para o report, consideramos quem executou (completed_by) em vez de quem estava atribuído,
+      // para honrar o sistema de dispositivo partilhado onde outro funcionário pode fazer a tarefa.
+      let totalAssigned = 0;
       let done = 0;
-      userTasks.forEach(t => { if (isDone(t)) done++; });
+      
+      visibleTasksBase.forEach(t => {
+         const log = logs[t.id];
+         if (log && log.completed) {
+            // Se está concluída, conta para quem realmente executou (o ID gravado no log)
+            if (log.completed_by === u.id) {
+               totalAssigned++;
+               done++;
+            }
+         } else {
+            // Se não está concluída, conta para o responsável original previsto
+            if (t.assigned_to === u.id) {
+               totalAssigned++;
+            }
+         }
+      });
+
       rows.push({
         id: u.id,
-        total: userTasks.length,
+        total: totalAssigned,
         done: done,
-        pending: userTasks.filter(t => !isDone(t))
+        pending: visibleTasksBase.filter(t => !isDone(t) && t.assigned_to === u.id)
       });
     });
 
@@ -1425,6 +1448,13 @@ export default function ChecklistPage() {
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>{t.title}</p>
                                 
+                                {/* AQUI: Etiqueta visual indicando quem executou a tarefa */}
+                                {done && log?.completed_by && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 className="h-3 w-3" /> Feito por {userName(log.completed_by)}
+                                  </span>
+                                )}
+
                                 {t.due_date && (
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${done ? "bg-slate-100 text-slate-500 border-slate-200" : isOverdue ? "bg-red-50 text-red-600 border-red-200" : t.due_date === todayStr ? "bg-amber-50 text-amber-600 border-amber-200" : "bg-blue-50 text-blue-600 border-blue-200"}`}>
                                     <Clock className="h-3 w-3" /> 
@@ -1453,7 +1483,7 @@ export default function ChecklistPage() {
                             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                               <span className="flex items-center gap-1 text-primary/80 font-medium"><Building2 className="h-3.5 w-3.5" /> {t.empresa || "Todas"}</span>
                               {t.setor && <span className="flex items-center gap-1 text-indigo-600 font-medium"><Briefcase className="h-3.5 w-3.5" /> {t.setor}</span>}
-                              <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Resp: {userName(t.assigned_to)}</span>
+                              <span className="flex items-center gap-1"><UserIcon className="h-3.5 w-3.5" /> Previsto para: {userName(t.assigned_to)}</span>
                               {t.created_by && <span className="flex items-center gap-1 text-amber-700 font-medium"><ArrowUpRight className="h-3.5 w-3.5" /> Enviado por: {userName(t.created_by)}</span>}
                             </div>
 
@@ -1808,12 +1838,24 @@ export default function ChecklistPage() {
       {completingTemplate && (
         <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
           <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
+            
+            {/* AQUI: Novo campo dropdown para identificar quem está a executar a tarefa */}
+            <Field label="Executado por *">
+              <select value={executorId} onChange={(e) => setExecutorId(e.target.value)} required className={inputCls}>
+                {/* Opcional: <option value="">Selecione o seu nome...</option> */}
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                ))}
+              </select>
+            </Field>
+
             {completingTemplate.requires_input && <Field label={`${completingTemplate.input_label || "Valor"} *`}><input value={inputValue} onChange={(e) => setInputValue(e.target.value)} autoFocus className={inputCls} /></Field>}
             {completingTemplate.requires_photo && <Field label="Foto *"><input type="file" accept="image/*" capture="environment" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm" /></Field>}
-            <div className="flex justify-end gap-2">
+            
+            <div className="flex justify-end gap-2 mt-4">
               <button type="button" onClick={() => setCompletingTemplate(null)} disabled={uploading} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
               <button type="submit" disabled={uploading} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Concluir
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Confirmar Conclusão
               </button>
             </div>
           </form>
