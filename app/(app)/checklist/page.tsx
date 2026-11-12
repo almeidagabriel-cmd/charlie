@@ -113,7 +113,7 @@ interface NotificationItem {
   created_at: string;
 }
 
-// --- Componente Inteligente de Menção (@) ---
+// --- Componente Inteligente de Menção (@) CORRIGIDO ---
 function MentionInput({
   value,
   onChange,
@@ -180,20 +180,24 @@ function MentionInput({
     if (showDropdown && filteredUsers.length > 0 && e.key === 'Enter') {
       e.preventDefault();
       handleSelectUser(filteredUsers[0]);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!value.trim()) return;
+      onSubmit(value, assignedUserId);
+      setAssignedUserId(null);
+      setShowDropdown(false);
     }
   };
 
+  const handleAddClick = () => {
+    if (!value.trim()) return;
+    onSubmit(value, assignedUserId);
+    setAssignedUserId(null);
+    setShowDropdown(false);
+  };
+
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!value.trim()) return;
-        onSubmit(value, assignedUserId);
-        setAssignedUserId(null);
-        setShowDropdown(false);
-      }}
-      className={`relative flex flex-1 gap-1.5 ${isComment ? "pt-1" : ""}`}
-    >
+    <div className={`relative flex flex-1 gap-1.5 ${isComment ? "pt-1" : ""}`}>
       <div className="relative flex-1">
         <input
           ref={inputRef}
@@ -227,13 +231,14 @@ function MentionInput({
         )}
       </div>
       <button
-        type="submit"
+        type="button"
+        onClick={handleAddClick}
         className={`flex items-center justify-center rounded bg-primary text-white hover:bg-primary/90 shrink-0 font-medium ${isComment ? "px-3 py-1.5" : "px-4 py-1.5 text-xs"}`}
         title={buttonLabel}
       >
         {isComment ? <Send className="h-3.5 w-3.5" /> : buttonLabel}
       </button>
-    </form>
+    </div>
   );
 }
 
@@ -363,7 +368,6 @@ export default function ChecklistPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [completingTemplate, setCompletingTemplate] = useState<Template | null>(null);
   
-  // NOVO: Estado para guardar quem executou a tarefa
   const [executorId, setExecutorId] = useState<string>("");
   const [inputValue, setInputValue] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -744,7 +748,6 @@ export default function ChecklistPage() {
     }
   }
 
-  // ATUALIZADO: Agora SEMPRE abre o modal para selecionar o utilizador que está a assinar a tarefa
   async function handleCheckClick(template: Template) {
     if (template.is_one_time && template.assigned_to && !template.accepted && template.assigned_to === currentUser) {
       return toast.info("Você precisa aceitar a tarefa antes de marcá-la como concluída.");
@@ -754,7 +757,6 @@ export default function ChecklistPage() {
     const isCompleted = !!currentLog?.completed;
     
     if (isCompleted) {
-      // Se já está concluída, desmarca instantaneamente (sem modal)
       setTogglingId(template.id);
       await supabase.from("daily_checklist_logs").update({ completed: false, completed_at: null, completed_by: currentUser }).eq("id", currentLog.id);
       setTogglingId(null);
@@ -774,15 +776,13 @@ export default function ChecklistPage() {
 
       toast.success("Tarefa desmarcada!");
     } else {
-      // Se NÃO está concluída, abre SEMPRE o modal para escolher o executor
       setCompletingTemplate(template); 
       setInputValue(""); 
       setPhotoFile(null);
-      setExecutorId(currentUser || ""); // Define o logado como padrão no dropdown
+      setExecutorId(currentUser || ""); 
     }
   }
 
-  // ATUALIZADO: Recebe e guarda a ID do utilizador selecionado no dropdown (selectedExecutorId)
   async function submitCompletion(templateId: string, assignedTo: string | null, val: string | null, photoUrl: string | null, selectedExecutorId: string) {
     setUploading(true);
     const currentLog = logs[templateId];
@@ -867,7 +867,6 @@ export default function ChecklistPage() {
       const { data: publicUrlData } = supabase.storage.from("checklist-photos").getPublicUrl(filePath);
       photoUrl = publicUrlData.publicUrl;
     }
-    // Passa o ID do executor escolhido no dropdown
     await submitCompletion(completingTemplate.id, completingTemplate.assigned_to, inputValue || null, photoUrl, executorId);
   }
 
@@ -1187,21 +1186,17 @@ export default function ChecklistPage() {
     const rows: { id: string | null; total: number; done: number; pending: Template[] }[] = [];
 
     targetUsersForReport.forEach(u => {
-      // Para o report, consideramos quem executou (completed_by) em vez de quem estava atribuído,
-      // para honrar o sistema de dispositivo partilhado onde outro funcionário pode fazer a tarefa.
       let totalAssigned = 0;
       let done = 0;
       
       visibleTasksBase.forEach(t => {
          const log = logs[t.id];
          if (log && log.completed) {
-            // Se está concluída, conta para quem realmente executou (o ID gravado no log)
             if (log.completed_by === u.id) {
                totalAssigned++;
                done++;
             }
          } else {
-            // Se não está concluída, conta para o responsável original previsto
             if (t.assigned_to === u.id) {
                totalAssigned++;
             }
@@ -1448,7 +1443,6 @@ export default function ChecklistPage() {
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className={`font-medium ${done ? "text-slate-400 line-through" : "text-slate-800"}`}>{t.title}</p>
                                 
-                                {/* AQUI: Etiqueta visual indicando quem executou a tarefa */}
                                 {done && log?.completed_by && (
                                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
                                     <CheckCircle2 className="h-3 w-3" /> Feito por {userName(log.completed_by)}
@@ -1839,10 +1833,8 @@ export default function ChecklistPage() {
         <Modal title={`Concluir: ${completingTemplate.title}`} onClose={() => !uploading && setCompletingTemplate(null)}>
           <form onSubmit={handleConfirmModalSubmit} className="space-y-4">
             
-            {/* AQUI: Novo campo dropdown para identificar quem está a executar a tarefa */}
             <Field label="Executado por *">
               <select value={executorId} onChange={(e) => setExecutorId(e.target.value)} required className={inputCls}>
-                {/* Opcional: <option value="">Selecione o seu nome...</option> */}
                 {users.map(u => (
                   <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
                 ))}
